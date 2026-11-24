@@ -6,7 +6,8 @@
   "scripts": {
     "bootstrap": "tsx src/bootstrap.ts",
     "transfer": "tsx src/cli-transfer.ts",
-    "typecheck": "tsc -p ."
+    "typecheck": "tsc -p .",
+    "e2e": "tsx src/e2e.ts"
   },
   "dependencies": {
     "@remit/shared": "^0.1.0",

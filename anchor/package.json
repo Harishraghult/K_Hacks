@@ -1,0 +1,27 @@
+{
+  "name": "@remit/anchor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "typecheck": "tsc -p .",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.1"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.4.3",
+    "@stellar/stellar-sdk": "^17.4.0",
+    "bignumber.js": "^11.1.5",
+    "dotenv": "^18.0.10",
+    "fastify": "^5.12.8",
+    "zod": "^4.6.7",
+    "@remit/shared": "^0.1.0"
+  }
+}
