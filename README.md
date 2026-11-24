@@ -43,7 +43,13 @@ sequenceDiagram
 
 ## Run it
 
-Requirements: Node.js 20+ (built and tested on Node 24).
+Requirements: Node.js 20+ (built and tested on Node 24) and an internet connection (for Stellar testnet).
+
+**On a laptop, the easy way:** double-click `start.bat` (Windows), or run `npm start`. It creates `.env`, sets up testnet if needed, builds the UI, starts both servers, and opens http://localhost:3000. Press Ctrl+C (or close the window) to stop.
+
+The UI picks a compact **Laptop** layout automatically on screens under 1700×900 and a roomy **Projector** layout on bigger screens. Override it with the toggle in the top-right corner.
+
+**Manually:**
 
 ```bash
 npm install

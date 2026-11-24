@@ -9,7 +9,8 @@
     "typecheck": "tsc -p .",
     "e2e": "tsx src/e2e.ts",
     "demo:reset": "tsx src/demo-reset.ts",
-    "demo:seed": "tsx src/demo-seed.ts"
+    "demo:seed": "tsx src/demo-seed.ts",
+    "start": "tsx src/start-all.ts"
   },
   "dependencies": {
     "@remit/shared": "^0.1.0",

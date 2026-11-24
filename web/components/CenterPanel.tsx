@@ -4,12 +4,14 @@ import { Big, fmt, stroopsToXlm } from "@remit/shared/money";
 import { TERMINAL, type TransferStatus } from "@remit/shared/transfer";
 import { api, type AppConfig, type Health, type Quote, type TransferView } from "@/lib/api";
 import { relTime } from "@/lib/useLive";
+import { useView } from "@/lib/view";
 import { Badge, FIAT_LABEL, STATUS_META, Spinner, short } from "./ui";
 
 const HAPPY: TransferStatus[] = ["CREATED", "COMPLIANCE_CHECK", "APPROVED", "SUBMITTED", "SETTLED_ON_CHAIN", "PAYOUT_PENDING", "PAYOUT_COMPLETE"];
 const HOP_LABEL: Record<string, string> = { tAED: "AED token", tUSDC: "USDC token", tINR: "INR token", XLM: "XLM" };
 
 function Route({ hops, amount, best }: { hops: string[]; amount?: string; best: boolean }) {
+  const { compact } = useView();
   return (
     <div className={`flex items-center gap-2 ${best ? "" : "opacity-40 grayscale"}`}>
       {hops.map((h, i) => (
@@ -17,10 +19,10 @@ function Route({ hops, amount, best }: { hops: string[]; amount?: string; best: 
           {i > 0 && (
             <div className="flex flex-col items-center">
               <span className={`text-[9px] uppercase tracking-wider ${best ? "text-emerald-400" : "text-zinc-500"}`}>swap</span>
-              <span className={`h-0.5 w-10 ${best ? "bg-gradient-to-r from-emerald-500 to-emerald-300" : "bg-zinc-600"}`} />
+              <span className={`h-0.5 ${compact ? "w-6" : "w-10"} ${best ? "bg-gradient-to-r from-emerald-500 to-emerald-300" : "bg-zinc-600"}`} />
             </div>
           )}
-          <div className={`rounded-xl border px-3 py-2 text-center ${best ? "border-emerald-500/50 bg-emerald-500/10" : "border-zinc-700 bg-zinc-800"}`}>
+          <div className={`rounded-xl border text-center ${compact ? "px-2 py-1" : "px-3 py-2"} ${best ? "border-emerald-500/50 bg-emerald-500/10" : "border-zinc-700 bg-zinc-800"}`}>
             <div className="text-sm font-bold text-white">{FIAT_LABEL[h] ?? h}</div>
             <div className="text-[9px] text-zinc-400">{HOP_LABEL[h] ?? h}</div>
           </div>
@@ -37,9 +39,10 @@ function Route({ hops, amount, best }: { hops: string[]; amount?: string; best: 
 }
 
 function Card({ title, right, children }: { title: string; right?: React.ReactNode; children: React.ReactNode }) {
+  const { compact } = useView();
   return (
-    <section className="rounded-2xl border border-white/10 bg-zinc-900/80 p-4">
-      <div className="mb-3 flex items-center justify-between">
+    <section className={`rounded-2xl border border-white/10 bg-zinc-900/80 ${compact ? "p-3" : "p-4"}`}>
+      <div className={`flex ${compact ? "mb-2" : "mb-3"} items-center justify-between`}>
         <h2 className="text-xs font-semibold uppercase tracking-[0.12em] text-zinc-400">{title}</h2>
         {right}
       </div>
@@ -62,6 +65,7 @@ interface Props {
 }
 
 export function CenterPanel({ quote, transfer, transfers, config, health, onSelect, micro, batchIds, onBatch, allTransfers }: Props) {
+  const { compact } = useView();
   const [microBusy, setMicroBusy] = useState(false);
   const [microErr, setMicroErr] = useState<string>();
 
@@ -126,13 +130,13 @@ export function CenterPanel({ quote, transfer, transfers, config, health, onSele
   }
 
   return (
-    <div className="flex h-[calc(100vh-130px)] min-h-[660px] flex-col gap-3 overflow-y-auto pr-1">
+    <div className={`flex flex-col overflow-y-auto pr-1 ${compact ? "h-[calc(100vh-64px)] min-h-[500px] gap-2.5" : "h-[calc(100vh-130px)] min-h-[660px] gap-3"}`}>
       <Card
         title="Liquidity route"
         right={route && <span className="text-[11px] text-zinc-500">{t ? `transfer ${t.id}` : "live quote"} · Stellar path payment (atomic)</span>}
       >
         {route ? (
-          <div className="space-y-3">
+          <div className={compact ? "space-y-2" : "space-y-3"}>
             <Route hops={route.best} amount={route.bestAmt} best />
             {route.rejected.map((r, i) => (
               <Route key={i} hops={r.route} amount={r.destAmount} best={false} />
@@ -144,11 +148,11 @@ export function CenterPanel({ quote, transfer, transfers, config, health, onSele
         )}
       </Card>
 
-      <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+      <div className={`grid gap-3 ${compact ? "grid-cols-2" : "grid-cols-1 xl:grid-cols-2"}`}>
         <Card title="Traditional wire (illustrative)">
           {cmp && config ? (
             <div className="space-y-2">
-              <div className="text-3xl font-bold tabular-nums text-zinc-300">₹{fmt(cmp.tradRecv)}</div>
+              <div className={`font-bold tabular-nums text-zinc-300 ${compact ? "text-2xl" : "text-3xl"}`}>₹{fmt(cmp.tradRecv)}</div>
               <dl className="space-y-1 text-xs text-zinc-400">
                 <div className="flex justify-between"><dt>Fees + FX markup</dt><dd className="tabular-nums">{config.traditional.FEE_PCT}% ≈ ${fmt(cmp.tradFee)}</dd></div>
                 <div className="flex justify-between"><dt>Arrives in</dt><dd>{config.traditional.SETTLEMENT}</dd></div>
@@ -165,7 +169,7 @@ export function CenterPanel({ quote, transfer, transfers, config, health, onSele
         <Card title="This engine (actual, on-chain)" right={cmp && !cmp.final && <Badge tone="blue">quoted</Badge>}>
           {cmp ? (
             <div className="space-y-2">
-              <div className="text-3xl font-bold tabular-nums text-emerald-300">₹{fmt(cmp.engRecv)}</div>
+              <div className={`font-bold tabular-nums text-emerald-300 ${compact ? "text-2xl" : "text-3xl"}`}>₹{fmt(cmp.engRecv)}</div>
               <dl className="space-y-1 text-xs text-zinc-400">
                 <div className="flex justify-between"><dt>Network fee</dt><dd className="tabular-nums">{cmp.engFeeXlm} XLM ≈ ${cmp.engFeeUsd}</dd></div>
                 <div className="flex justify-between"><dt>Pool fees + spread vs mid</dt><dd className="tabular-nums">{fmt(cmp.costPct, 2)}%</dd></div>
@@ -191,7 +195,7 @@ export function CenterPanel({ quote, transfer, transfers, config, health, onSele
         )}
       >
         {t ? (
-          <ol className="relative space-y-2 border-l border-zinc-700 pl-4">
+          <ol className={`relative border-l ${compact ? "space-y-1.5" : "space-y-2"} border-zinc-700 pl-4`}>
             {events.map((e, i) => {
               const m = STATUS_META[e.status];
               const dt = i === 0 ? 0 : (e.at - events[0].at) / 1000;
@@ -243,7 +247,7 @@ export function CenterPanel({ quote, transfer, transfers, config, health, onSele
 
       <Card title="Recent transfers">
         <div className="divide-y divide-white/5">
-          {transfers.slice(0, 12).map((x) => (
+          {transfers.slice(0, compact ? 8 : 12).map((x) => (
             <button key={x.id} onClick={() => onSelect(x.id)} className={`flex w-full items-center justify-between gap-2 py-1.5 text-left text-xs hover:bg-white/5 ${x.id === t?.id ? "bg-white/5" : ""}`}>
               <span className="font-mono text-zinc-500">{x.id}</span>
               <span className="truncate text-zinc-300">

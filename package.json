@@ -16,6 +16,7 @@
     "typecheck": "npm run typecheck --workspaces --if-present",
     "e2e": "npm run e2e -w scripts --",
     "demo:reset": "npm run demo:reset -w scripts",
-    "demo:seed": "npm run demo:seed -w scripts"
+    "demo:seed": "npm run demo:seed -w scripts",
+    "start": "npm run start -w scripts"
   }
 }

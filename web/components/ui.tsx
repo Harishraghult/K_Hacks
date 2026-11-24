@@ -1,20 +1,30 @@
+"use client";
 import type { ReactNode } from "react";
 import type { TransferStatus } from "@remit/shared";
+import { useView } from "@/lib/view";
 
-export function Phone({ title, subtitle, children, tone = "light" }: { title: string; subtitle?: string; children: ReactNode; tone?: "light" | "dark" }) {
+export function Phone({ title, subtitle, children, footer }: { title: string; subtitle?: string; children: ReactNode; footer?: ReactNode }) {
+  const { compact } = useView();
   return (
-    <div className="mx-auto w-full max-w-[380px] rounded-[2.6rem] border border-white/10 bg-zinc-800 p-2.5 shadow-2xl shadow-black/50">
-      <div className={`flex h-[calc(100vh-150px)] min-h-[640px] flex-col overflow-hidden rounded-[2.1rem] ${tone === "light" ? "bg-white text-zinc-900" : "bg-zinc-950 text-zinc-100"}`}>
-        <div className="flex items-center justify-between px-6 pb-1 pt-3 text-[11px] font-semibold opacity-60">
-          <span>9:41</span>
-          <span className="h-4 w-20 rounded-full bg-zinc-900/90" />
-          <span>5G ▮▮▮</span>
-        </div>
-        <div className="px-5 pb-3 pt-2">
-          <div className="text-lg font-semibold leading-tight">{title}</div>
+    <div
+      className={`mx-auto w-full border border-white/10 bg-zinc-800 shadow-2xl shadow-black/50 ${compact ? "max-w-[340px] rounded-[1.9rem] p-1.5" : "max-w-[380px] rounded-[2.6rem] p-2.5"}`}
+    >
+      <div
+        className={`flex flex-col overflow-hidden bg-white text-zinc-900 ${compact ? "h-[calc(100vh-70px)] min-h-[500px] rounded-[1.5rem]" : "h-[calc(100vh-150px)] min-h-[640px] rounded-[2.1rem]"}`}
+      >
+        {!compact && (
+          <div className="flex items-center justify-between px-6 pb-1 pt-3 text-[11px] font-semibold opacity-60">
+            <span>9:41</span>
+            <span className="h-4 w-20 rounded-full bg-zinc-900/90" />
+            <span>5G ▮▮▮</span>
+          </div>
+        )}
+        <div className={compact ? "px-4 pb-2 pt-3" : "px-5 pb-3 pt-2"}>
+          <div className={`font-semibold leading-tight ${compact ? "text-base" : "text-lg"}`}>{title}</div>
           {subtitle && <div className="text-xs opacity-60">{subtitle}</div>}
         </div>
-        <div className="flex-1 overflow-y-auto px-5 pb-5">{children}</div>
+        <div className={`flex-1 overflow-y-auto ${compact ? "px-4 pb-3" : "px-5 pb-5"}`}>{children}</div>
+        {footer && <div className={`border-t border-zinc-100 bg-white ${compact ? "px-4 py-2.5" : "px-5 py-3"}`}>{footer}</div>}
       </div>
     </div>
   );

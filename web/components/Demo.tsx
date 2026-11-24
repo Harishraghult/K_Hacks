@@ -2,6 +2,7 @@
 import { useCallback, useMemo, useState } from "react";
 import type { Quote } from "@/lib/api";
 import { useLive } from "@/lib/useLive";
+import { useView, type ViewPref } from "@/lib/view";
 import { AdminDrawer } from "./AdminDrawer";
 import { CenterPanel } from "./CenterPanel";
 import { RecipientPanel } from "./RecipientPanel";
@@ -9,6 +10,7 @@ import { SenderPanel, type RecipientForm } from "./SenderPanel";
 
 export function Demo() {
   const live = useLive();
+  const { compact, pref, setPref } = useView();
   const [senderId, setSenderId] = useState("SENDER_1");
   const [recipient, setRecipient] = useState<RecipientForm>({ name: "Lakshmi Kumar", upiId: "lakshmi@okaxis", purpose: "Family support" });
   const [quote, setQuote] = useState<Quote>();
@@ -23,25 +25,33 @@ export function Demo() {
   const h = live.health;
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(ellipse_at_top,_#1e293b,_#09090b_60%)] px-5 pb-4 pt-3 text-zinc-100">
-      <header className="mb-3 flex flex-wrap items-center gap-x-5 gap-y-2">
+    <div className={`min-h-screen bg-[radial-gradient(ellipse_at_top,_#1e293b,_#09090b_60%)] text-zinc-100 ${compact ? "px-3 pb-2 pt-2" : "px-5 pb-4 pt-3"}`}>
+      <header className={`flex flex-wrap items-center gap-x-5 gap-y-2 ${compact ? "mb-2" : "mb-3"}`}>
         <div>
-          <h1 className="text-xl font-bold tracking-tight">
+          <h1 className={`font-bold tracking-tight ${compact ? "text-lg leading-tight" : "text-xl"}`}>
             Remit<span className="text-emerald-400">Rail</span>
+            {compact && <span className="ml-2 text-[11px] font-normal text-zinc-500">Stellar testnet · real settlement, mocked bank rails</span>}
           </h1>
-          <p className="text-[11px] text-zinc-400">Compliant cross-border settlement on Stellar testnet: real path payments, mocked bank rails</p>
+          {!compact && <p className="text-[11px] text-zinc-400">Compliant cross-border settlement on Stellar testnet: real path payments, mocked bank rails</p>}
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-3 text-[11px] text-zinc-400">
           <Dot ok={live.connected} label={live.connected ? "live" : "reconnecting"} />
-          {h && <Dot ok={h.horizon.reachable} label={h.horizon.reachable ? `testnet ledger #${h.horizon.latestLedger}` : "Horizon unreachable"} />}
+          {h && <Dot ok={h.horizon.reachable} label={h.horizon.reachable ? (compact ? `ledger #${h.horizon.latestLedger}` : `testnet ledger #${h.horizon.latestLedger}`) : "Horizon unreachable"} />}
           {h && <Dot ok={h.watcher.connected} label="payout watcher" />}
           {h && (
             <span>
-              1 USD = ₹{h.fx.inrPerUsd} · 1 USD = AED {h.fx.aedPerUsd}{" "}
-              <span className={h.fx.source === "fallback" ? "text-amber-400" : ""}>(rate as of {h.fx.asOf})</span>
+              1 USD = ₹{h.fx.inrPerUsd}{compact ? "" : ` · 1 USD = AED ${h.fx.aedPerUsd}`}{" "}
+              <span className={h.fx.source === "fallback" ? "text-amber-400" : ""}>({compact ? h.fx.asOf : `rate as of ${h.fx.asOf}`})</span>
             </span>
           )}
-          <button onClick={() => setAdminOpen(true)} className="relative rounded-lg border border-white/15 px-3 py-1.5 font-semibold text-zinc-200 hover:bg-white/10">
+          <div className="flex overflow-hidden rounded-lg border border-white/15" role="group" aria-label="Layout">
+            {(["auto", "laptop", "projector"] as ViewPref[]).map((v) => (
+              <button key={v} onClick={() => setPref(v)} className={`px-2 py-1 capitalize ${pref === v ? "bg-white/15 text-white" : "text-zinc-400 hover:bg-white/5"}`}>
+                {v === "auto" ? `Auto (${compact ? "laptop" : "projector"})` : v}
+              </button>
+            ))}
+          </div>
+          <button onClick={() => setAdminOpen(true)} className={`relative rounded-lg border border-white/15 font-semibold text-zinc-200 hover:bg-white/10 ${compact ? "px-2.5 py-1" : "px-3 py-1.5"}`}>
             Compliance console
             {flaggedCount > 0 && <span className="absolute -right-2 -top-2 rounded-full bg-amber-500 px-1.5 text-[10px] font-bold text-black">{flaggedCount}</span>}
           </button>
@@ -55,7 +65,7 @@ export function Demo() {
         </Banner>
       )}
 
-      <main className="grid grid-cols-1 items-start gap-5 lg:grid-cols-[minmax(320px,380px)_1fr_minmax(320px,380px)]">
+      <main className={`grid grid-cols-1 items-start ${compact ? "gap-3 lg:grid-cols-[minmax(280px,330px)_1fr_minmax(280px,330px)]" : "gap-5 lg:grid-cols-[minmax(320px,380px)_1fr_minmax(320px,380px)]"}`}>
         <SenderPanel
           senders={live.senders}
           senderId={senderId}
