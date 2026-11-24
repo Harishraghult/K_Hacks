@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { Asset, Keypair } from "@stellar/stellar-sdk";
-import { ACCOUNT_NAMES, ISSUER_FOR, type AccountName, type AssetCode } from "./constants.js";
+import { ACCOUNT_NAMES, ISSUER_FOR, type AccountName, type AssetCode } from "./constants";
 
 export interface AccountEntry {
   publicKey: string;

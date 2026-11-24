@@ -140,3 +140,4 @@ for (const [name, fn] of Object.entries(suites)) {
 }
 console.log(failures ? `\n${failures} check(s) FAILED\n` : "\nAll checks passed\n");
 process.exit(failures ? 1 : 0);
+export {};

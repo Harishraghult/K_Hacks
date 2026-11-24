@@ -1,10 +1,10 @@
 import { Asset, BASE_FEE } from "@stellar/stellar-sdk";
-import type { AccountBook } from "./accounts.js";
-import { assetOf } from "./accounts.js";
-import { FIAT_FOR_ASSET, PRICE_IMPACT_WARN_PCT, QUOTE_TTL_SEC, type AssetCode } from "./constants.js";
-import { getFx, type FxSnapshot } from "./fx.js";
-import { Big, applySlippage, stroopsToXlm, toStellar } from "./money.js";
-import { server } from "./stellar.js";
+import type { AccountBook } from "./accounts";
+import { assetOf } from "./accounts";
+import { FIAT_FOR_ASSET, PRICE_IMPACT_WARN_PCT, QUOTE_TTL_SEC, type AssetCode } from "./constants";
+import { getFx, type FxSnapshot } from "./fx";
+import { Big, applySlippage, stroopsToXlm, toStellar } from "./money";
+import { server } from "./stellar";
 
 /** Reference XLM price for showing the network fee in USD (testnet XLM has no market price). */
 export const XLM_USD_REFERENCE = process.env.XLM_USD_REFERENCE ?? "0.30";

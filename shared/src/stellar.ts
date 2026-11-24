@@ -1,6 +1,6 @@
 import { Horizon, Keypair, TransactionBuilder, BASE_FEE, type xdr, type Memo } from "@stellar/stellar-sdk";
-import { HORIZON_URL, NETWORK_PASSPHRASE, TX_TIMEOUT_SEC, MAX_FEE_STROOPS } from "./constants.js";
-import { StellarTxError, extractResultCodes, friendlyMessage } from "./errors.js";
+import { HORIZON_URL, NETWORK_PASSPHRASE, TX_TIMEOUT_SEC, MAX_FEE_STROOPS } from "./constants";
+import { StellarTxError, extractResultCodes, friendlyMessage } from "./errors";
 
 export const server = new Horizon.Server(HORIZON_URL);
 

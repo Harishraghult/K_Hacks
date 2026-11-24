@@ -24,6 +24,9 @@ import {
   loadAccounts,
   newTransferId,
   parseAmount,
+  POOLS,
+  poolStatus,
+  rebalanceAll,
   server as horizon,
   submitOps,
   type AccountName,
@@ -99,6 +102,23 @@ setInterval(() => {
   expireStaleReviews();
 }, 10_000).unref();
 
+// Mock market maker: keep AMM pools at the FX mid (demo traffic only flows one way).
+let lastRebalance: { at: number; result: string[] } | undefined;
+let rebalancing = false;
+async function rebalance(thresholdPct = 0.25) {
+  if (rebalancing) return lastRebalance?.result ?? [];
+  rebalancing = true;
+  try {
+    const result = await rebalanceAll(book, await getFx(), thresholdPct);
+    lastRebalance = { at: Date.now(), result };
+    if (result.some((r) => r.includes("rebalanced"))) app.log.info({ result }, "market maker rebalanced pools");
+    return result;
+  } finally {
+    rebalancing = false;
+  }
+}
+setInterval(() => rebalance().catch((e) => app.log.warn(`rebalance failed: ${(e as Error).message}`)), 60_000).unref();
+
 async function quoteFor(sendAsset: AssetCode, sendAmount: string, slippageBps: number): Promise<Quote> {
   const key = `${sendAsset}:${sendAmount}:${slippageBps}`;
   const hit = quoteCache.get(key);
@@ -142,8 +162,11 @@ app.get("/health", async () => {
   const missing: string[] = [];
   if (horizonOk) for (const n of critical) if (!(await loadAccountOrNull(book[n].publicKey))) missing.push(n);
   const fx = await getFx();
+  const pools = horizonOk && !missing.length ? (await Promise.all(POOLS.map((p) => poolStatus(book, p, fx)))).filter(Boolean) : [];
   const body = {
     ok: horizonOk && missing.length === 0 && watcherState.connected,
+    pools,
+    lastRebalance,
     horizon: { reachable: horizonOk, latestLedger },
     needsBootstrap: missing.length > 0,
     missingAccounts: missing,
@@ -349,6 +372,13 @@ app.post("/admin/clawback", async (req) => {
   invalidateSenders();
   broadcast("senders", {});
   return { txHash: r.hash, clawedBack: `${amount} ${body.asset}` };
+});
+
+app.post("/admin/rebalance", async (req) => {
+  requireAdmin(req);
+  healthCache = undefined;
+  quoteCache.clear();
+  return { result: await rebalance(0) };
 });
 
 app.get("/admin/unmatched", async (req) => {

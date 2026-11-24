@@ -1,5 +1,5 @@
-import type { AssetCode } from "./constants.js";
-import { Big } from "./money.js";
+import type { AssetCode } from "./constants";
+import { Big } from "./money";
 
 export const STATUSES = [
   "CREATED",

@@ -19,10 +19,7 @@ import {
   AuthRequiredFlag,
   AuthRevocableFlag,
   Horizon,
-  LiquidityPoolAsset,
-  LiquidityPoolFeeV18,
   Operation,
-  getLiquidityPoolId,
   type xdr,
 } from "@stellar/stellar-sdk";
 import {
@@ -36,6 +33,9 @@ import {
   keypair,
   loadAccountOrNull,
   loadOrCreateAccounts,
+  POOLS,
+  poolInfo,
+  rebalanceAll,
   server,
   sleep,
   submitOps,
@@ -49,6 +49,7 @@ const book: AccountBook = loadOrCreateAccounts();
 const pub = (n: AccountName) => book[n].publicKey;
 const A = (c: AssetCode) => assetOf(book, c);
 const log = (...a: unknown[]) => console.log("•", ...a);
+const RESET_AUTH = process.argv.includes("--reset-auth");
 
 type Balance = Horizon.HorizonApi.BalanceLine;
 type AssetBalance = Horizon.HorizonApi.BalanceLineAsset;
@@ -156,50 +157,6 @@ async function topUp(from: AccountName, to: AccountName, code: AssetCode, target
   log(`${from} → ${to}: ${amount} ${code}`);
 }
 
-function poolAsset(x: AssetCode, y: AssetCode) {
-  const [a, b] = Asset.compare(A(x), A(y)) <= 0 ? [A(x), A(y)] : [A(y), A(x)];
-  const lp = new LiquidityPoolAsset(a, b, LiquidityPoolFeeV18);
-  const id = Buffer.from(getLiquidityPoolId("constant_product", lp.getLiquidityPoolParameters())).toString("hex");
-  return { lp, a, b, id };
-}
-
-/** Deposits into a pool if it is empty. `amounts` is keyed by asset code. */
-async function ensurePool(x: AssetCode, y: AssetCode, amounts: Record<string, string>) {
-  const { lp, a, b, id } = poolAsset(x, y);
-  const mm = "MARKET_MAKER" as const;
-  const bals = await balancesOf(mm);
-  const hasShareLine = bals.some((bl) => bl.asset_type === "liquidity_pool_shares" && (bl as { liquidity_pool_id?: string }).liquidity_pool_id === id);
-  if (!hasShareLine) {
-    await submitOps(keypair(book, mm), [Operation.changeTrust({ asset: lp })]);
-    log(`MARKET_MAKER: pool-share trustline ${x}/${y}`);
-  }
-  let shares = "0";
-  try {
-    const pool = await server.liquidityPools().liquidityPoolId(id).call();
-    shares = pool.total_shares;
-  } catch {
-    /* pool entry is created by the share trustline; treat as empty */
-  }
-  if (new Big(shares).gt(0)) {
-    log(`pool ${x}/${y} already has liquidity (${shares} shares), leaving it`);
-    return id;
-  }
-  const amtA = amounts[a.getCode()];
-  const amtB = amounts[b.getCode()];
-  const price = new Big(amtA).div(amtB);
-  await submitOps(keypair(book, mm), [
-    Operation.liquidityPoolDeposit({
-      liquidityPoolId: id,
-      maxAmountA: amtA,
-      maxAmountB: amtB,
-      minPrice: price.times("0.99").toFixed(7),
-      maxPrice: price.times("1.01").toFixed(7),
-    }),
-  ]);
-  log(`pool ${x}/${y}: deposited ${amtA} ${a.getCode()} + ${amtB} ${b.getCode()}`);
-  return id;
-}
-
 /** Direct tAED→tINR orderbook: MM sells tINR for tAED at a deliberately worse rate. */
 async function ensureDirectOffer(inrPerAed: Big, amountInr: string) {
   const worse = inrPerAed.times("0.985"); // 1.5% worse than mid
@@ -241,8 +198,8 @@ async function main() {
   // 3. Market maker trustlines + pool-share trustlines, authorised
   await ensureTrustlines("MARKET_MAKER", MM_ASSETS);
   await ensureAuthorized(MM_ASSETS.map((code) => ({ holder: "MARKET_MAKER" as const, code })));
-  for (const [x, y] of [["tUSDC", "tINR"], ["tAED", "tUSDC"]] as [AssetCode, AssetCode][]) {
-    const { lp, id } = poolAsset(x, y);
+  for (const { x, y } of POOLS) {
+    const { lp, id } = poolInfo(book, x, y);
     const bals = await balancesOf("MARKET_MAKER");
     if (!bals.some((bl) => (bl as { liquidity_pool_id?: string }).liquidity_pool_id === id)) {
       await submitOps(keypair(book, "MARKET_MAKER"), [Operation.changeTrust({ asset: lp })]);
@@ -256,6 +213,20 @@ async function main() {
   // 5. Remaining trustlines + authorisation
   await Promise.all(HOLDERS.map((h) => ensureTrustlines(h.name, h.assets)));
   await ensureAuthorized(HOLDERS.filter((h) => h.authorize).flatMap((h) => h.assets.map((code) => ({ holder: h.name, code }))));
+  if (RESET_AUTH) {
+    // Demo reset: undo anything the demo changed (KYC'd the unverified wallet, froze a sender).
+    for (const h of HOLDERS.filter((x) => !x.authorize)) {
+      const bals = await balancesOf(h.name);
+      for (const code of h.assets) {
+        if (findLine(bals, A(code))?.is_authorized) {
+          await submitOps(keypair(book, ISSUERS.find((i) => i.code === code)!.name), [
+            Operation.setTrustLineFlags({ trustor: pub(h.name), asset: A(code), flags: { authorized: false } }),
+          ]);
+          log(`${h.name}: ${code} authorization revoked (demo reset)`);
+        }
+      }
+    }
+  }
 
   // 6. Mint
   await topUp("ISSUER_USD", "MARKET_MAKER", "tUSDC", "2000000", "1000000");
@@ -274,8 +245,10 @@ async function main() {
   const inrPerUsd = new Big(fx.inrPerUsd);
   const inrPerAed = inrPerUsd.div(fx.aedPerUsd);
   log(`FX: 1 USD = ${fx.inrPerUsd} INR (${fx.source}, as of ${fx.asOf}); 1 USD = ${fx.aedPerUsd} AED; 1 AED = ${inrPerAed.toFixed(4)} INR`);
-  const usdInrPool = await ensurePool("tUSDC", "tINR", { tUSDC: "500000", tINR: toStellar(inrPerUsd.times(500000)) });
-  const aedUsdPool = await ensurePool("tAED", "tUSDC", { tUSDC: "400000", tAED: toStellar(new Big(fx.aedPerUsd).times(400000)) });
+  // Seeds empty pools at the FX mid; re-centres pools that demo traffic has pushed off the mid.
+  for (const line of await rebalanceAll(book, fx)) log(`pool ${line}`);
+  const usdInrPool = poolInfo(book, "tUSDC", "tINR").id;
+  const aedUsdPool = poolInfo(book, "tUSDC", "tAED").id;
   await ensureDirectOffer(inrPerAed, "5000000");
 
   const state = { bootstrappedAt: new Date().toISOString(), fx, pools: { "tUSDC/tINR": usdInrPool, "tAED/tUSDC": aedUsdPool } };

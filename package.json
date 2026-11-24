@@ -12,8 +12,10 @@
     "cli:transfer": "npm run transfer -w scripts",
     "anchor": "npm run dev -w anchor",
     "web": "npm run dev -w web",
-    "test": "npm run test -w shared -w anchor --if-present",
+    "test": "npm run test -w shared",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "e2e": "npm run e2e -w scripts --"
+    "e2e": "npm run e2e -w scripts --",
+    "demo:reset": "npm run demo:reset -w scripts",
+    "demo:seed": "npm run demo:seed -w scripts"
   }
 }

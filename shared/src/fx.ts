@@ -1,4 +1,4 @@
-import { AED_PER_USD, FALLBACK_INR_PER_USD } from "./constants.js";
+import { AED_PER_USD, FALLBACK_INR_PER_USD } from "./constants";
 
 export interface FxSnapshot {
   inrPerUsd: string;
