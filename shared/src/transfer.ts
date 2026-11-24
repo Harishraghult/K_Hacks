@@ -58,6 +58,7 @@ export interface Recipient {
   name: string;
   upiId?: string;
   bankAcct?: string;
+  ifsc?: string;
 }
 
 export interface TravelRule {

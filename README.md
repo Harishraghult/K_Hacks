@@ -47,6 +47,26 @@ Requirements: Node.js 20+ (built and tested on Node 24) and an internet connecti
 
 **On a laptop, the easy way:** double-click `start.bat` (Windows), or run `npm start`. It creates `.env`, sets up testnet if needed, builds the UI, starts both servers, and opens http://localhost:3000. Press Ctrl+C (or close the window) to stop.
 
+### Two apps, one server
+
+| URL | Who it's for |
+|---|---|
+| http://localhost:3000 | **Customer app.** Sign up or log in with username and password, verify ID, add money, send to UPI or a bank account, track transfers, see receipts. |
+| http://localhost:3000/demo | **Operator / judge view.** Sender phone, routing, timeline, recipient phone, and the compliance console (admin token `demo-admin`). |
+
+Demo logins: `ravi / ravi1234`, `maria / maria1234`, `arjun / arjun1234`, `newuser / newuser1234` (not verified yet), `watchlisted / watch1234` (on a sanctions list). You can also sign up: every new account gets **its own new Stellar testnet wallet**, which stays locked on-chain until the user passes the (mock) ID check.
+
+Customer accounts, prototype level:
+- passwords are salted scrypt hashes
+- sessions are random tokens in an HttpOnly, SameSite=Lax cookie; only a hash is stored
+- 5 wrong passwords lock the login for 60 seconds
+- each customer only ever sees their own transfers (API and live stream)
+- wallet keys are encrypted at rest (AES-256-GCM, key in `.data/wallet.key`)
+
+Open the app as `localhost`, not `127.0.0.1`; the login cookie is tied to the hostname. `npm run demo:reset` wipes signed-up accounts too.
+
+**Not production-grade:** the `/demo` operator endpoints (`/events`, `/transfers`, `/senders`) are unauthenticated so the judge view works without login. A real deployment would put them behind operator auth.
+
 The UI picks a compact **Laptop** layout automatically on screens under 1700×900 and a roomy **Projector** layout on bigger screens. Override it with the toggle in the top-right corner.
 
 **Manually:**

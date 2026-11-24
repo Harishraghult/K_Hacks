@@ -47,7 +47,7 @@ function recordUnmatched(p: PaymentRecord, memo: string | undefined, reason: str
     "INSERT OR IGNORE INTO unmatched (op_id, tx_hash, memo, amount, asset, from_acct, reason, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
   ).run(p.id, p.transaction_hash, memo ?? null, p.amount ?? "0", p.asset_code ?? "XLM", p.from ?? "", reason, Date.now());
   console.warn(`[watcher] UNMATCHED op ${p.id} memo=${memo ?? "(none)"}: ${reason}`);
-  broadcast("unmatched", { opId: p.id, txHash: p.transaction_hash, memo, amount: p.amount, asset: p.asset_code, reason });
+  broadcast("unmatched", { opId: p.id, txHash: p.transaction_hash, memo, amount: p.amount, asset: p.asset_code, reason }, "admin");
 }
 
 /** Handles one incoming payment. Must be idempotent: may be re-delivered after a restart. */

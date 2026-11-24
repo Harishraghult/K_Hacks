@@ -236,8 +236,8 @@ async function main() {
   await topUp("ISSUER_AED", "ANCHOR_SEND", "tAED", "3000000", "300000");
   // Starter balances for demo senders (only refilled when nearly empty)
   for (const s of ["SENDER_1", "SENDER_2", "SENDER_3", "SANCTIONED_1"] as AccountName[]) {
-    await topUp("ANCHOR_SEND", s, "tAED", "1000", "10");
-    await topUp("ANCHOR_SEND", s, "tUSDC", "300", "5");
+    await topUp("ANCHOR_SEND", s, "tAED", "1000", "500");
+    await topUp("ANCHOR_SEND", s, "tUSDC", "300", "150");
   }
 
   // 7. Liquidity priced from live FX

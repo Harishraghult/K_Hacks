@@ -32,6 +32,7 @@ import {
   type AccountName,
   type AssetCode,
   type Quote,
+  type Recipient,
 } from "@remit/shared";
 import { db, DB_PATH } from "./db.js";
 import { setAuthorized, trustlines } from "./chain.js";
@@ -51,12 +52,14 @@ import {
 } from "./service.js";
 import { broadcast, sseClientCount, sseHandler } from "./sse.js";
 import { startWatcher, watcherState } from "./watcher.js";
+import { senderPub } from "./wallets.js";
+import { registerCustomerRoutes } from "./customer.js";
 
 const book = loadAccounts();
 seedDb(book);
 
 const app = Fastify({ logger: { level: "info", redact: ["req.headers['x-admin-token']"] } });
-await app.register(cors, { origin: ENV.WEB_ORIGINS, methods: ["GET", "POST"] });
+await app.register(cors, { origin: ENV.WEB_ORIGINS, methods: ["GET", "POST"], credentials: true });
 
 // ---------------- helpers ----------------
 
@@ -67,6 +70,7 @@ const RecipientSchema = z
     name: z.string().trim().min(1).max(80),
     upiId: z.string().trim().regex(/^[\w.\-]{2,64}@[a-zA-Z]{2,64}$/, "Invalid UPI ID").optional(),
     bankAcct: z.string().trim().regex(/^\d{9,18}$/, "Invalid bank account").optional(),
+    ifsc: z.string().trim().toUpperCase().regex(/^[A-Z]{4}0[A-Z0-9]{6}$/, "Invalid IFSC code").optional(),
   })
   .refine((r) => r.upiId || r.bankAcct, "UPI ID or bank account required");
 
@@ -227,22 +231,23 @@ app.post("/kyc/verify", async (req) => {
   return { status: "PASSED", authorizedOnChain: authorized };
 });
 
-app.post("/deposit", async (req) => {
-  const body = parse(z.object({ senderId: SenderId, fiatAmount: z.union([z.string(), z.number()]), fiatCurrency: z.enum(["USD", "AED"]) }), req.body);
-  const amount = parseAmount(body.fiatAmount);
-  const pub = book[body.senderId].publicKey;
-  if (!kycPassed(pub)) throw new HttpError(403, "Complete KYC before adding money", "KYC_REQUIRED");
-  const asset = ASSET_FOR_FIAT[body.fiatCurrency];
+/** Mock bank debit → ANCHOR_SEND pays the equivalent digital currency into the sender's wallet. */
+async function depositFor(senderId: string, rawAmount: unknown, fiatCurrency: "USD" | "AED") {
+  const amount = parseAmount(rawAmount);
+  const pub = senderPub(book, senderId);
+  if (!kycPassed(pub)) throw new HttpError(403, "Verify your identity before adding money", "KYC_REQUIRED");
+  const asset = ASSET_FOR_FIAT[fiatCurrency];
   const lines = await trustlines(book, pub, [asset]);
-  if (!lines[asset].authorized) throw new HttpError(403, "Wallet is frozen or not authorized for this currency", "NOT_AUTHORIZED");
-  const bank = db.prepare("SELECT currency, balance FROM bank WHERE account_id = ?").get(body.senderId) as { currency: string; balance: string };
+  if (!lines[asset].authorized) throw new HttpError(403, "Wallet is frozen or not enabled for this currency", "NOT_AUTHORIZED");
+  const bank = db.prepare("SELECT currency, balance FROM bank WHERE account_id = ?").get(senderId) as { currency: string; balance: string } | undefined;
+  if (!bank) throw new HttpError(400, "No linked bank account", "NO_BANK");
   // Mock FX at the bank if the deposit currency differs from the bank account currency.
   const fx = await getFx();
-  const debit = bank.currency === body.fiatCurrency ? new Big(amount) : body.fiatCurrency === "USD" ? new Big(amount).times(fx.aedPerUsd) : new Big(amount).div(fx.aedPerUsd);
-  if (debit.gt(bank.balance)) throw new HttpError(400, `Insufficient mock bank balance (${bank.currency} ${new Big(bank.balance).toFixed(2)})`, "BANK_INSUFFICIENT");
+  const debit = bank.currency === fiatCurrency ? new Big(amount) : fiatCurrency === "USD" ? new Big(amount).times(fx.aedPerUsd) : new Big(amount).div(fx.aedPerUsd);
+  if (debit.gt(bank.balance)) throw new HttpError(400, `Not enough money in your bank account (${bank.currency} ${new Big(bank.balance).toFixed(2)})`, "BANK_INSUFFICIENT");
 
   // Debit first (conditional update guards against concurrent deposits), credit back on failure.
-  const res = db.prepare("UPDATE bank SET balance = ? WHERE account_id = ? AND balance = ?").run(new Big(bank.balance).minus(debit).toFixed(7), body.senderId, bank.balance);
+  const res = db.prepare("UPDATE bank SET balance = ? WHERE account_id = ? AND balance = ?").run(new Big(bank.balance).minus(debit).toFixed(7), senderId, bank.balance);
   if (Number(res.changes) !== 1) throw new HttpError(409, "Concurrent deposit, retry", "CONFLICT");
   try {
     const r = await submitOps(keypair(book, "ANCHOR_SEND"), [Operation.payment({ destination: pub, asset: assetOf(book, asset), amount })]);
@@ -250,10 +255,15 @@ app.post("/deposit", async (req) => {
     broadcast("senders", {});
     return { txHash: r.hash, asset, amount, bankDebited: `${bank.currency} ${debit.toFixed(2)}` };
   } catch (e) {
-    const cur = db.prepare("SELECT balance FROM bank WHERE account_id = ?").get(body.senderId) as { balance: string };
-    db.prepare("UPDATE bank SET balance = ? WHERE account_id = ?").run(new Big(cur.balance).plus(debit).toFixed(7), body.senderId);
+    const cur = db.prepare("SELECT balance FROM bank WHERE account_id = ?").get(senderId) as { balance: string };
+    db.prepare("UPDATE bank SET balance = ? WHERE account_id = ?").run(new Big(cur.balance).plus(debit).toFixed(7), senderId);
     throw e;
   }
+}
+
+app.post("/deposit", async (req) => {
+  const body = parse(z.object({ senderId: SenderId, fiatAmount: z.union([z.string(), z.number()]), fiatCurrency: z.enum(["USD", "AED"]) }), req.body);
+  return depositFor(body.senderId, body.fiatAmount, body.fiatCurrency);
 });
 
 app.get("/quote", async (req) => {
@@ -264,25 +274,29 @@ app.get("/quote", async (req) => {
   return quoteFor(q.sendAsset, parseAmount(q.sendAmount), q.slippageBps);
 });
 
+async function transferFor(senderId: string, quoteId: string, recipient: Recipient, purpose: string) {
+  const quote = quotes.get(quoteId);
+  if (!quote) throw new HttpError(409, "Quote not found or expired. Please refresh the quote.", "QUOTE_EXPIRED");
+  if (Date.now() > quote.expiresAt) throw new HttpError(409, "Quote expired. Please review the refreshed quote.", "QUOTE_EXPIRED");
+  quotes.delete(quoteId); // single use
+
+  const pub = senderPub(book, senderId);
+  const lines = await trustlines(book, pub, [quote.sendAsset]);
+  if (new Big(quote.sendAmount).gt(lines[quote.sendAsset].balance) && lines[quote.sendAsset].authorized)
+    throw new HttpError(400, `Insufficient balance: you have ${new Big(lines[quote.sendAsset].balance).toFixed(2)} ${quote.sendAsset}`, "INSUFFICIENT_BALANCE");
+
+  const row = await createTransfer(book, { quote, senderId, recipient, purpose });
+  const decision = await runSingle(book, row);
+  invalidateSenders();
+  return { transferId: row.id, status: decision, transfer: toView(getRow(row.id)!) };
+}
+
 app.post("/transfer", async (req, reply) => {
   const body = parse(
     z.object({ quoteId: z.string(), senderId: SenderId, recipient: RecipientSchema, purpose: z.string().trim().max(60).default("Family support") }),
     req.body,
   );
-  const quote = quotes.get(body.quoteId);
-  if (!quote) throw new HttpError(409, "Quote not found or expired. Please refresh the quote.", "QUOTE_EXPIRED");
-  if (Date.now() > quote.expiresAt) throw new HttpError(409, "Quote expired. Please review the refreshed quote.", "QUOTE_EXPIRED");
-  quotes.delete(body.quoteId); // single use
-
-  const pub = book[body.senderId].publicKey;
-  const lines = await trustlines(book, pub, [quote.sendAsset]);
-  if (new Big(quote.sendAmount).gt(lines[quote.sendAsset].balance) && lines[quote.sendAsset].authorized)
-    throw new HttpError(400, `Insufficient balance: you have ${new Big(lines[quote.sendAsset].balance).toFixed(2)} ${quote.sendAsset}`, "INSUFFICIENT_BALANCE");
-
-  const row = await createTransfer(book, { quote, senderId: body.senderId, recipient: body.recipient, purpose: body.purpose });
-  const decision = await runSingle(book, row);
-  invalidateSenders();
-  return reply.status(201).send({ transferId: row.id, status: decision, transfer: toView(getRow(row.id)!) });
+  return reply.status(201).send(await transferFor(body.senderId, body.quoteId, body.recipient, body.purpose));
 });
 
 /** Micro-remittances: N small transfers settled together in one ledger (one tx, N path-payment ops). */
@@ -394,6 +408,10 @@ app.post("/admin/simulate-stray-payment", async (req) => {
   ], { memo: Memo.text("no-such-transfer") });
   return { txHash: r.hash };
 });
+
+// ---------------- customer app (username + password) ----------------
+
+await registerCustomerRoutes(app, { book, depositFor, transferFor, parse, RecipientSchema, invalidateSenders });
 
 // ---------------- start ----------------
 

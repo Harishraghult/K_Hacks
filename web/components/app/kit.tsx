@@ -1,0 +1,137 @@
+"use client";
+import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from "react";
+import type { TransferStatus } from "@remit/shared/transfer";
+import type { TransferView } from "@/lib/api";
+
+export const CUR: Record<string, string> = { tAED: "AED", tUSDC: "USD", tINR: "INR" };
+export const ASSET_OF: Record<"AED" | "USD", "tAED" | "tUSDC"> = { AED: "tAED", USD: "tUSDC" };
+
+export function Card({ children, className = "" }: { children: ReactNode; className?: string }) {
+  return <div className={`rounded-2xl border border-zinc-200 bg-white shadow-sm ${className}`}>{children}</div>;
+}
+
+export function Button({ variant = "primary", className = "", children, ...rest }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "primary" | "secondary" | "ghost" | "danger" }) {
+  const v = {
+    primary: "bg-emerald-600 text-white hover:bg-emerald-700 disabled:bg-zinc-300",
+    secondary: "border border-zinc-300 bg-white text-zinc-800 hover:bg-zinc-50 disabled:opacity-50",
+    ghost: "text-zinc-600 hover:bg-zinc-100 disabled:opacity-50",
+    danger: "bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-50",
+  }[variant];
+  return (
+    <button className={`inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition disabled:cursor-not-allowed ${v} ${className}`} {...rest}>
+      {children}
+    </button>
+  );
+}
+
+export function Field({ label, hint, error, children }: { label: string; hint?: string; error?: string; children: ReactNode }) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-sm font-medium text-zinc-700">{label}</span>
+      {children}
+      {error ? <span className="mt-1 block text-xs text-rose-600">{error}</span> : hint ? <span className="mt-1 block text-xs text-zinc-500">{hint}</span> : null}
+    </label>
+  );
+}
+
+const inputCls = "w-full rounded-xl border border-zinc-300 bg-white px-3 py-2.5 text-sm text-zinc-900 outline-none transition placeholder:text-zinc-400 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/15";
+export function Input(props: InputHTMLAttributes<HTMLInputElement>) {
+  return <input {...props} className={`${inputCls} ${props.className ?? ""}`} />;
+}
+export function Select(props: SelectHTMLAttributes<HTMLSelectElement>) {
+  return <select {...props} className={`${inputCls} ${props.className ?? ""}`} />;
+}
+
+export function Spinner({ className = "" }: { className?: string }) {
+  return <span className={`inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent ${className}`} />;
+}
+
+export function Alert({ tone, children }: { tone: "error" | "warn" | "info" | "ok"; children: ReactNode }) {
+  const c = { error: "border-rose-200 bg-rose-50 text-rose-800", warn: "border-amber-200 bg-amber-50 text-amber-900", info: "border-sky-200 bg-sky-50 text-sky-900", ok: "border-emerald-200 bg-emerald-50 text-emerald-900" }[tone];
+  return <div className={`rounded-xl border px-4 py-3 text-sm ${c}`}>{children}</div>;
+}
+
+// ---------------- customer-friendly status ----------------
+
+type Tone = "green" | "blue" | "amber" | "red" | "grey";
+export const STATUS: Record<TransferStatus, { label: string; tone: Tone; help: string }> = {
+  CREATED: { label: "Processing", tone: "blue", help: "We've received your transfer." },
+  COMPLIANCE_CHECK: { label: "Processing", tone: "blue", help: "Running our standard security checks." },
+  APPROVED: { label: "Processing", tone: "blue", help: "Checks passed. Sending now." },
+  SUBMITTED: { label: "On its way", tone: "blue", help: "Your money is moving to India." },
+  SETTLED_ON_CHAIN: { label: "On its way", tone: "blue", help: "Arrived at our partner in India." },
+  PAYOUT_PENDING: { label: "Crediting", tone: "blue", help: "Crediting your recipient's account now." },
+  PAYOUT_COMPLETE: { label: "Delivered", tone: "green", help: "Your recipient has the money." },
+  FLAGGED_FOR_REVIEW: { label: "Under review", tone: "amber", help: "Larger transfers get a quick manual review, usually within minutes. Nothing has been taken from your balance yet." },
+  EXPIRED: { label: "Cancelled", tone: "grey", help: "The review window passed. Nothing was charged." },
+  BLOCKED: { label: "Not sent", tone: "red", help: "We couldn't send this transfer. Nothing was charged." },
+  ON_CHAIN_FAILED: { label: "Not sent", tone: "red", help: "This transfer didn't go through. Nothing was charged." },
+  PAYOUT_FAILED: { label: "Returning", tone: "amber", help: "The recipient's bank rejected the credit. We're returning your money." },
+  REFUND_PENDING: { label: "Returning", tone: "amber", help: "Returning your money to your balance." },
+  REFUNDED: { label: "Refunded", tone: "amber", help: "The recipient's bank rejected the credit, so we returned the money to your balance." },
+  REFUND_FAILED: { label: "Needs attention", tone: "red", help: "We couldn't complete the refund automatically. Our team has been alerted." },
+};
+
+export function Pill({ status }: { status: TransferStatus }) {
+  const s = STATUS[status];
+  const c = { green: "bg-emerald-100 text-emerald-800", blue: "bg-sky-100 text-sky-800", amber: "bg-amber-100 text-amber-900", red: "bg-rose-100 text-rose-800", grey: "bg-zinc-100 text-zinc-700" }[s.tone];
+  return <span className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-semibold ${c}`}>{s.label}</span>;
+}
+
+const STEPS = [
+  { key: "sent", label: "Sent", reached: ["CREATED", "COMPLIANCE_CHECK", "FLAGGED_FOR_REVIEW", "APPROVED", "SUBMITTED", "SETTLED_ON_CHAIN", "PAYOUT_PENDING", "PAYOUT_COMPLETE"] },
+  { key: "checked", label: "Security check", reached: ["APPROVED", "SUBMITTED", "SETTLED_ON_CHAIN", "PAYOUT_PENDING", "PAYOUT_COMPLETE"] },
+  { key: "moving", label: "Reached India", reached: ["SETTLED_ON_CHAIN", "PAYOUT_PENDING", "PAYOUT_COMPLETE"] },
+  { key: "done", label: "Delivered", reached: ["PAYOUT_COMPLETE"] },
+];
+
+/** 4-step progress tracker. Failure states replace the tracker with a clear message. */
+export function Tracker({ t }: { t: TransferView }) {
+  const failed = ["BLOCKED", "ON_CHAIN_FAILED", "EXPIRED", "PAYOUT_FAILED", "REFUND_PENDING", "REFUNDED", "REFUND_FAILED"].includes(t.status);
+  const current = STEPS.findIndex((s) => !s.reached.includes(t.status));
+  const at = (statuses: string[]) => t.events.find((e) => statuses.includes(e.status))?.at;
+  if (failed) {
+    return (
+      <div className={`rounded-xl p-4 ${STATUS[t.status].tone === "red" ? "bg-rose-50" : "bg-amber-50"}`}>
+        <div className="font-semibold">{STATUS[t.status].label}</div>
+        <div className="mt-1 text-sm text-zinc-700">{STATUS[t.status].help}</div>
+        {t.reasons.length > 0 && t.status === "BLOCKED" && <div className="mt-1 text-xs text-zinc-500">Reason: {t.reasons.join("; ")}</div>}
+        {t.errorMessage && t.status === "ON_CHAIN_FAILED" && <div className="mt-1 text-xs text-zinc-500">{t.errorMessage}</div>}
+      </div>
+    );
+  }
+  return (
+    <ol className="grid grid-cols-4 gap-2">
+      {STEPS.map((s, i) => {
+        const done = s.reached.includes(t.status);
+        const active = i === current;
+        const ts = done ? at(i === 0 ? ["CREATED"] : i === 1 ? ["APPROVED"] : i === 2 ? ["SETTLED_ON_CHAIN"] : ["PAYOUT_COMPLETE"]) : undefined;
+        return (
+          <li key={s.key} className="flex flex-col items-center text-center">
+            <div className="relative flex w-full items-center">
+              <div className={`h-1 flex-1 rounded ${i === 0 ? "invisible" : done || active ? "bg-emerald-500" : "bg-zinc-200"}`} />
+              <div
+                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-bold ${done ? "bg-emerald-500 text-white" : active ? "border-2 border-emerald-500 bg-white text-emerald-600" : "border-2 border-zinc-200 bg-white text-zinc-400"}`}
+              >
+                {done ? "✓" : active ? <Spinner className="h-3.5 w-3.5" /> : i + 1}
+              </div>
+              <div className={`h-1 flex-1 rounded ${i === STEPS.length - 1 ? "invisible" : done && STEPS[i + 1].reached.includes(t.status) ? "bg-emerald-500" : "bg-zinc-200"}`} />
+            </div>
+            <div className={`mt-1.5 text-xs font-semibold ${done || active ? "text-zinc-900" : "text-zinc-400"}`}>
+              {i === 1 && t.status === "FLAGGED_FOR_REVIEW" ? "Under review" : s.label}
+            </div>
+            {ts && <div className="text-[11px] text-zinc-500">{new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</div>}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+export function dateTime(ms: number) {
+  return new Date(ms).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+export function recipientLine(r: { upiId?: string; bankAcct?: string; ifsc?: string }) {
+  return r.upiId ? `UPI · ${r.upiId}` : `Bank ••${r.bankAcct?.slice(-4)}${r.ifsc ? ` · ${r.ifsc}` : ""}`;
+}

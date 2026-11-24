@@ -128,6 +128,21 @@ async function stray() {
   check("appears in unmatched list", Array.isArray(u.json) && u.json.some((x: Json) => x.tx_hash === r.json.txHash));
 }
 
+// The suite needs the fresh demo state: demo sessions spend balances and may verify the "no KYC" wallet.
+{
+  const s = (await call("GET", "/senders")).json as Json[];
+  const by = (id: string) => s.find((x) => x.id === id) ?? {};
+  const problems: string[] = [];
+  if (by("UNVERIFIED_1").kyc === "PASSED") problems.push("the unverified demo wallet has been verified");
+  if (Number(by("SENDER_1").bank?.balance ?? 0) < 100) problems.push("Ravi's mock bank is below AED 100");
+  if (Number(by("SENDER_3").bank?.balance ?? 0) < 4000) problems.push("Arjun's mock bank is below AED 4,000");
+  if (Number(by("SENDER_2").balances?.tUSDC?.balance ?? 0) < 75) problems.push("Maria's USD wallet is below 75");
+  if (problems.length) {
+    console.error(`\nDemo state is used up: ${problems.join("; ")}.\nStop the anchor, run \`npm run demo:reset\`, start it again, then re-run the e2e.\n`);
+    process.exit(2);
+  }
+}
+
 const only = process.argv[2];
 const suites: Record<string, () => Promise<void>> = { happyPath, sanctioned, unverified, payoutFailRefund, flaggedReview, batch, validation, stray };
 for (const [name, fn] of Object.entries(suites)) {

@@ -11,7 +11,7 @@ import {
   type TravelRule,
 } from "@remit/shared";
 import { db } from "./db.js";
-import { personaById } from "./personas.js";
+import { senderName } from "./wallets.js";
 import { broadcast } from "./sse.js";
 
 export interface TransferRow {
@@ -75,7 +75,7 @@ export function insertTransfer(t: NewTransfer): TransferRow {
   );
   db.prepare("INSERT INTO transfer_events (transfer_id, status, at, detail) VALUES (?, 'CREATED', ?, ?)").run(t.id, now, null);
   const row = getRow(t.id)!;
-  broadcast("transfer", toView(row));
+  broadcast("transfer", toView(row), row.sender_id);
   return row;
 }
 
@@ -136,7 +136,7 @@ export function transition(id: string, to: TransferStatus, patch: Patch = {}, de
     throw e;
   }
   const updated = getRow(id)!;
-  broadcast("transfer", toView(updated));
+  broadcast("transfer", toView(updated), updated.sender_id);
   return updated;
 }
 
@@ -168,7 +168,7 @@ export function toView(r: TransferRow): TransferView {
     id: r.id,
     ...(r.batch_id ? { batchId: r.batch_id } : {}),
     senderId: r.sender_id,
-    senderName: personaById(r.sender_id)?.name ?? r.sender_id,
+    senderName: senderName(r.sender_id),
     sendAsset: r.send_asset,
     sendAmount: r.send_amount,
     destAsset: r.dest_asset,

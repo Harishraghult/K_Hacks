@@ -64,6 +64,7 @@ export async function api<T>(path: string, init: { method?: string; body?: unkno
       },
       body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
       cache: "no-store",
+      credentials: "include",
     });
   } catch {
     throw new ApiError(0, `Cannot reach the anchor server at ${ANCHOR_URL}. Is it running?`, "OFFLINE");
@@ -74,3 +75,4 @@ export async function api<T>(path: string, init: { method?: string; body?: unkno
 }
 
 export type { Quote, TransferView };
+export type { Recipient } from "@remit/shared";

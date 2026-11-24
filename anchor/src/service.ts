@@ -25,7 +25,7 @@ import {
 } from "@remit/shared";
 import { db } from "./db.js";
 import { deliveredAmounts, pathPaymentOp, trustlines } from "./chain.js";
-import { personaById } from "./personas.js";
+import { senderExists, senderName, senderPub, senderSigner } from "./wallets.js";
 import {
   getRow,
   insertTransfer,
@@ -77,15 +77,15 @@ async function complianceFor(book: AccountBook, row: Pick<TransferRow, "id" | "s
 
 export interface CreateInput {
   quote: Quote;
-  senderId: AccountName;
+  senderId: string;
   recipient: Recipient;
   purpose: string;
   batch?: { id: string; index: number };
 }
 
 export async function createTransfer(book: AccountBook, i: CreateInput): Promise<TransferRow> {
-  const persona = personaById(i.senderId);
-  if (!persona) throw new HttpError(400, "Unknown sender");
+  if (!senderExists(i.senderId)) throw new HttpError(400, "Unknown sender");
+  const pub = senderPub(book, i.senderId);
   const fx = await getFx();
   const q = i.quote;
   return insertTransfer({
@@ -93,7 +93,7 @@ export async function createTransfer(book: AccountBook, i: CreateInput): Promise
     batchId: i.batch?.id,
     batchIndex: i.batch?.index,
     senderId: i.senderId,
-    senderPub: book[i.senderId].publicKey,
+    senderPub: pub,
     sendAsset: q.sendAsset,
     sendAmount: q.sendAmount,
     destAsset: q.destAsset,
@@ -105,8 +105,8 @@ export async function createTransfer(book: AccountBook, i: CreateInput): Promise
     path: q.best.hops,
     recipient: i.recipient,
     travel: {
-      originatorName: persona.name,
-      originatorAccount: book[i.senderId].publicKey,
+      originatorName: senderName(i.senderId),
+      originatorAccount: pub,
       beneficiaryName: i.recipient.name,
       beneficiaryAccount: i.recipient.upiId ?? i.recipient.bankAcct ?? "",
       purpose: i.purpose,
@@ -138,7 +138,7 @@ async function submitSingle(book: AccountBook, id: string) {
   const row = getRow(id)!;
   const hops = JSON.parse(row.path_json);
   try {
-    const res = await submitOps(keypair(book, row.sender_id as AccountName), [
+    const res = await submitOps(senderSigner(book, row.sender_id), [
       pathPaymentOp(hops, row.send_amount, book.ANCHOR_RECV.publicKey, row.dest_min),
     ], {
       memo: Memo.text(row.id),
@@ -192,10 +192,10 @@ export async function runBatch(book: AccountBook, rows: TransferRow[], batchId: 
     approved.push(row);
   }
   if (!approved.length) return;
-  const sender = approved[0].sender_id as AccountName;
+  const sender = approved[0].sender_id;
   try {
     const ops = approved.map((r) => pathPaymentOp(JSON.parse(r.path_json), r.send_amount, book.ANCHOR_RECV.publicKey, r.dest_min));
-    const res = await submitOps(keypair(book, sender), ops, {
+    const res = await submitOps(senderSigner(book, sender), ops, {
       memo: Memo.text(batchId),
       onHash: (hash) => approved.forEach((r) => getRow(r.id)!.status === "APPROVED" && transition(r.id, "SUBMITTED", { tx_hash: hash }, `batch tx ${hash.slice(0, 10)}…`)),
     });
