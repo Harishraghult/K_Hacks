@@ -1,0 +1,13 @@
+{
+  "name": "remit-engine",
+  "private": true,
+  "workspaces": ["shared", "scripts", "anchor", "web"],
+  "scripts": {
+    "bootstrap": "npm run bootstrap -w scripts",
+    "cli:transfer": "npm run transfer -w scripts",
+    "anchor": "npm run dev -w anchor",
+    "web": "npm run dev -w web",
+    "test": "npm run test -w shared -w anchor --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "name": "@remit/scripts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "bootstrap": "tsx src/bootstrap.ts",
+    "transfer": "tsx src/cli-transfer.ts",
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@remit/shared": "^0.1.0",
+    "@stellar/stellar-sdk": "^17.4.0",
+    "bignumber.js": "^11.1.5",
+    "dotenv": "^18.0.10"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.1"
+  }
+}
