@@ -60,11 +60,14 @@ export function AdminDrawer({ open, onClose, senders, transfers, health, unmatch
 
   return (
     <>
-      <div onClick={onClose} className={`fixed inset-0 z-40 bg-black/50 transition ${open ? "opacity-100" : "pointer-events-none opacity-0"}`} />
-      <aside className={`fixed right-0 top-0 z-50 h-full w-[440px] max-w-full overflow-y-auto border-l border-white/10 bg-zinc-950 p-5 text-zinc-100 shadow-2xl transition-transform ${open ? "translate-x-0" : "translate-x-full"}`}>
+      <div onClick={onClose} className={`fixed inset-0 z-40 bg-black/50 transition ${open ? "opacity-100 pointer-events-auto" : "pointer-events-none opacity-0"}`} />
+      <aside
+        aria-hidden={!open}
+        className={`fixed right-0 top-0 z-50 h-full w-[440px] max-w-full overflow-y-auto border-l border-white/10 bg-zinc-950 p-5 text-zinc-100 shadow-2xl transition-all ${open ? "translate-x-0 pointer-events-auto" : "translate-x-full pointer-events-none invisible"}`}
+      >
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-semibold">Compliance & ops console</h2>
-          <button onClick={onClose} className="rounded-lg px-2 py-1 text-zinc-400 hover:bg-white/10" aria-label="Close">✕</button>
+          <button type="button" onClick={onClose} className="rounded-lg px-2 py-1 text-zinc-400 hover:bg-white/10" aria-label="Close">✕</button>
         </div>
 
         <label className="mb-4 block text-xs text-zinc-400">
@@ -77,16 +80,16 @@ export function AdminDrawer({ open, onClose, senders, transfers, health, unmatch
         <Section title={`Review queue (${flagged.length})`}>
           {flagged.map((t) => (
             <div key={t.id} className="mb-2 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-xs">
-              <button onClick={() => onSelect(t.id)} className="font-mono text-amber-300 underline">{t.id}</button>
+              <button type="button" onClick={() => onSelect(t.id)} className="font-mono text-amber-300 underline">{t.id}</button>
               <div className="mt-1 text-zinc-300">
                 {t.senderName} → {t.recipient.name} ({t.recipient.upiId}) · {FIAT_LABEL[t.sendAsset]} {fmt(t.sendAmount)} ≈ USD {fmt(t.usdEquiv)}
               </div>
               <div className="text-zinc-500">{t.reasons.join("; ")}</div>
               <div className="mt-2 flex gap-2">
-                <button disabled={!!busy} onClick={() => run(`ap${t.id}`, () => api(`/admin/approve/${t.id}`, { method: "POST", admin: token }), `Approved ${t.id}`)} className="rounded-lg bg-emerald-600 px-3 py-1 font-semibold disabled:opacity-50">
+                <button type="button" disabled={!!busy} onClick={() => run(`ap${t.id}`, () => api(`/admin/approve/${t.id}`, { method: "POST", admin: token }), `Approved ${t.id}`)} className="rounded-lg bg-emerald-600 px-3 py-1 font-semibold disabled:opacity-50">
                   {busy === `ap${t.id}` ? <Spinner /> : "Approve"}
                 </button>
-                <button disabled={!!busy} onClick={() => run(`rj${t.id}`, () => api(`/admin/reject/${t.id}`, { method: "POST", admin: token }), `Rejected ${t.id}`)} className="rounded-lg bg-zinc-700 px-3 py-1 font-semibold disabled:opacity-50">
+                <button type="button" disabled={!!busy} onClick={() => run(`rj${t.id}`, () => api(`/admin/reject/${t.id}`, { method: "POST", admin: token }), `Rejected ${t.id}`)} className="rounded-lg bg-zinc-700 px-3 py-1 font-semibold disabled:opacity-50">
                   Reject
                 </button>
               </div>
@@ -106,11 +109,11 @@ export function AdminDrawer({ open, onClose, senders, transfers, health, unmatch
                 {s.sanctioned && <Badge tone="red">listed</Badge>}
                 {Object.values(s.balances).some((b) => b.frozen) && <Badge tone="red">frozen</Badge>}
                 {s.sanctioned ? (
-                  <button disabled={!!busy} onClick={() => run(`us${s.id}`, () => api("/admin/unsanction", { body: { publicKey: s.publicKey }, admin: token }), `${s.name} removed from list${s.kyc === "PASSED" ? " and re-authorized on-chain" : ""}`)} className="rounded-md bg-zinc-700 px-2 py-1 disabled:opacity-50">
+                  <button type="button" disabled={!!busy} onClick={() => run(`us${s.id}`, () => api("/admin/unsanction", { body: { publicKey: s.publicKey }, admin: token }), `${s.name} removed from list${s.kyc === "PASSED" ? " and re-authorized on-chain" : ""}`)} className="rounded-md bg-zinc-700 px-2 py-1 disabled:opacity-50">
                     {busy === `us${s.id}` ? <Spinner /> : "Delist"}
                   </button>
                 ) : (
-                  <button disabled={!!busy} onClick={() => run(`sa${s.id}`, () => api("/admin/sanction", { body: { publicKey: s.publicKey }, admin: token }), `${s.name} sanctioned; issuers revoked authorization on-chain`)} className="rounded-md bg-rose-600 px-2 py-1 disabled:opacity-50">
+                  <button type="button" disabled={!!busy} onClick={() => run(`sa${s.id}`, () => api("/admin/sanction", { body: { publicKey: s.publicKey }, admin: token }), `${s.name} sanctioned; issuers revoked authorization on-chain`)} className="rounded-md bg-rose-600 px-2 py-1 disabled:opacity-50">
                     {busy === `sa${s.id}` ? <Spinner /> : "Sanction + freeze"}
                   </button>
                 )}
@@ -132,6 +135,7 @@ export function AdminDrawer({ open, onClose, senders, transfers, health, unmatch
             </select>
             <input value={claw.amount} onChange={(e) => setClaw({ ...claw, amount: e.target.value })} className="w-20 rounded-lg bg-zinc-900 px-2 py-1" />
             <button
+              type="button"
               disabled={!!busy || !clawSender}
               onClick={() => run("claw", () => api("/admin/clawback", { body: { publicKey: clawSender!.publicKey, asset: claw.asset, amount: claw.amount }, admin: token }), `Clawed back ${claw.amount} ${claw.asset}`)}
               className="rounded-lg bg-rose-700 px-3 py-1 font-semibold disabled:opacity-50"
@@ -145,6 +149,7 @@ export function AdminDrawer({ open, onClose, senders, transfers, health, unmatch
         <Section title="Network enforcement demo">
           <p className="mb-2 text-[11px] text-zinc-400">Force-submit from the unverified wallet, skipping every backend check. Stellar itself must reject it (op_src_not_authorized).</p>
           <button
+            type="button"
             disabled={!!busy}
             onClick={() =>
               run("force", async () => {
@@ -160,7 +165,7 @@ export function AdminDrawer({ open, onClose, senders, transfers, health, unmatch
         </Section>
 
         <Section title={`Unmatched payments (${unmatched.length})`}>
-          <button disabled={!!busy} onClick={() => run("stray", () => api("/admin/simulate-stray-payment", { body: {}, admin: token }), "Stray payment sent; it should appear here without a payout")} className="mb-2 rounded-lg bg-zinc-800 px-3 py-1 text-xs disabled:opacity-50">
+          <button type="button" disabled={!!busy} onClick={() => run("stray", () => api("/admin/simulate-stray-payment", { body: {}, admin: token }), "Stray payment sent; it should appear here without a payout")} className="mb-2 rounded-lg bg-zinc-800 px-3 py-1 text-xs disabled:opacity-50">
             {busy === "stray" ? <Spinner /> : "Simulate stray payment (bad memo)"}
           </button>
           {unmatched.map((u) => (
@@ -190,7 +195,7 @@ export function AdminDrawer({ open, onClose, senders, transfers, health, unmatch
                 </Row>
               ))}
             </dl>
-            <button disabled={!!busy} onClick={() => run("rebal", () => api("/admin/rebalance", { body: {}, admin: token }), "Market maker re-centred pools at the FX mid")} className="mt-2 rounded-lg bg-zinc-800 px-3 py-1 text-xs disabled:opacity-50">
+            <button type="button" disabled={!!busy} onClick={() => run("rebal", () => api("/admin/rebalance", { body: {}, admin: token }), "Market maker re-centred pools at the FX mid")} className="mt-2 rounded-lg bg-zinc-800 px-3 py-1 text-xs disabled:opacity-50">
               {busy === "rebal" ? <Spinner /> : "Rebalance pools to FX mid"}
             </button>
             <p className="mt-1 text-[10px] text-zinc-500">Demo traffic flows one way and pushes pool prices off the mid; on mainnet arbitrage corrects this. Here the mock market maker does it automatically every minute.</p>

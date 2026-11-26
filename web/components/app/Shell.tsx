@@ -81,6 +81,7 @@ export function Shell({ title, children, actions }: { title: string; children: R
             </div>
           </div>
           <button
+            type="button"
             onClick={async () => {
               await logout();
               router.replace("/login");

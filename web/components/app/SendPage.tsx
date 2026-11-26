@@ -132,8 +132,8 @@ export function SendPage() {
               <h2 className="text-lg font-semibold">How much are you sending?</h2>
               <div>
                 <div className="flex items-center gap-3 rounded-2xl border-2 border-zinc-900 px-4 py-3">
-                  <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" autoFocus className="w-full bg-transparent text-4xl font-bold tabular-nums outline-none" aria-label="Amount to send" />
-                  <select value={cur} onChange={(e) => setCur(e.target.value as "AED" | "USD")} className="rounded-xl bg-zinc-100 px-3 py-2 text-base font-semibold" aria-label="Currency">
+                  <input id="send-amount" name="sendAmount" value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" autoFocus className="w-full bg-transparent text-4xl font-bold tabular-nums outline-none" aria-label="Amount to send" />
+                  <select id="send-currency" name="sendCurrency" value={cur} onChange={(e) => setCur(e.target.value as "AED" | "USD")} className="rounded-xl bg-zinc-100 px-3 py-2 text-base font-semibold" aria-label="Currency">
                     <option value="AED">AED</option>
                     <option value="USD">USD</option>
                   </select>
@@ -143,7 +143,7 @@ export function SendPage() {
                     {amountError ?? (overBalance ? "More than your balance" : `Balance: ${cur} ${balance ? fmt(balance.balance) : "—"}`)}
                   </span>
                   {canSend && (
-                    <button onClick={() => setAddOpen(true)} className="font-medium text-emerald-700 hover:underline">
+                    <button type="button" onClick={() => setAddOpen(true)} className="font-medium text-emerald-700 hover:underline">
                       + Add money
                     </button>
                   )}
@@ -176,27 +176,28 @@ export function SendPage() {
                     {saved.map((s, i) => (
                       <button
                         key={i}
+                        type="button"
                         onClick={() => {
                           setMethod(s.upiId ? "upi" : "bank");
                           setR({ name: s.name, upiId: s.upiId ?? "", bankAcct: s.bankAcct ?? "", ifsc: s.ifsc ?? "" });
                         }}
                         className="rounded-xl border border-zinc-200 px-3 py-2 text-left text-sm hover:border-emerald-500 hover:bg-emerald-50"
                       >
-                        <div className="font-semibold">{s.name}</div>
-                        <div className="text-xs text-zinc-500">{recipientLine(s)}</div>
+                        <div className="pointer-events-none font-semibold">{s.name}</div>
+                        <div className="pointer-events-none text-xs text-zinc-500">{recipientLine(s)}</div>
                       </button>
                     ))}
                   </div>
                 </div>
               )}
-              <Field label="Recipient's full name">
-                <Input value={r.name} onChange={(e) => setR({ ...r, name: e.target.value })} placeholder="e.g. Lakshmi Kumar" />
+              <Field label="Recipient's full name" id="recipient-name">
+                <Input id="recipient-name" name="recipientName" value={r.name} onChange={(e) => setR({ ...r, name: e.target.value })} placeholder="e.g. Lakshmi Kumar" />
               </Field>
               <div>
                 <div className="mb-1 text-sm font-medium text-zinc-700">How should they receive it?</div>
                 <div className="grid grid-cols-2 gap-2">
                   {(["upi", "bank"] as const).map((m) => (
-                    <button key={m} onClick={() => setMethod(m)} className={`rounded-xl border-2 px-4 py-3 text-left text-sm ${method === m ? "border-emerald-500 bg-emerald-50" : "border-zinc-200 hover:border-zinc-300"}`}>
+                    <button key={m} type="button" onClick={() => setMethod(m)} className={`rounded-xl border-2 px-4 py-3 text-left text-sm ${method === m ? "border-emerald-500 bg-emerald-50" : "border-zinc-200 hover:border-zinc-300"}`}>
                       <div className="font-semibold">{m === "upi" ? "UPI" : "Bank account"}</div>
                       <div className="text-xs text-zinc-500">{m === "upi" ? "Instant to any UPI app" : "Any Indian bank via IFSC"}</div>
                     </button>
@@ -204,16 +205,16 @@ export function SendPage() {
                 </div>
               </div>
               {method === "upi" ? (
-                <Field label="UPI ID" hint="Testing: fail@upi = bank rejects (you get refunded) · blocked@upi = sanctions hit">
-                  <Input value={r.upiId} onChange={(e) => setR({ ...r, upiId: e.target.value })} placeholder="name@okaxis" />
+                <Field label="UPI ID" id="recipient-upi" hint="Testing: fail@upi = bank rejects (you get refunded) · blocked@upi = sanctions hit">
+                  <Input id="recipient-upi" name="upiId" value={r.upiId} onChange={(e) => setR({ ...r, upiId: e.target.value })} placeholder="name@okaxis" />
                 </Field>
               ) : (
                 <div className="grid grid-cols-2 gap-3">
-                  <Field label="Account number">
-                    <Input value={r.bankAcct} onChange={(e) => setR({ ...r, bankAcct: e.target.value.replace(/\D/g, "") })} inputMode="numeric" />
+                  <Field label="Account number" id="recipient-bank-acct">
+                    <Input id="recipient-bank-acct" name="bankAcct" value={r.bankAcct} onChange={(e) => setR({ ...r, bankAcct: e.target.value.replace(/\D/g, "") })} inputMode="numeric" />
                   </Field>
-                  <Field label="IFSC code">
-                    <Input value={r.ifsc} onChange={(e) => setR({ ...r, ifsc: e.target.value.toUpperCase() })} placeholder="SBIN0001234" />
+                  <Field label="IFSC code" id="recipient-ifsc">
+                    <Input id="recipient-ifsc" name="ifsc" value={r.ifsc} onChange={(e) => setR({ ...r, ifsc: e.target.value.toUpperCase() })} placeholder="SBIN0001234" />
                   </Field>
                 </div>
               )}
@@ -270,7 +271,7 @@ export function SendPage() {
                 <Button variant="secondary" onClick={() => setStep(1)}>
                   Back
                 </Button>
-                <Button className="flex-1 py-3" disabled={busy || loading} onClick={confirm}>
+                <Button className="flex-1 py-3" disabled={busy || !quote} onClick={confirm}>
                   {busy ? <Spinner /> : `Confirm and send ${cur} ${fmt(amount)}`}
                 </Button>
               </div>

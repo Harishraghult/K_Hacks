@@ -10,7 +10,7 @@ export function Card({ children, className = "" }: { children: ReactNode; classN
   return <div className={`rounded-2xl border border-zinc-200 bg-white shadow-sm ${className}`}>{children}</div>;
 }
 
-export function Button({ variant = "primary", className = "", children, ...rest }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "primary" | "secondary" | "ghost" | "danger" }) {
+export function Button({ variant = "primary", className = "", children, type = "button", ...rest }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "primary" | "secondary" | "ghost" | "danger" }) {
   const v = {
     primary: "bg-emerald-600 text-white hover:bg-emerald-700 disabled:bg-zinc-300",
     secondary: "border border-zinc-300 bg-white text-zinc-800 hover:bg-zinc-50 disabled:opacity-50",
@@ -18,15 +18,15 @@ export function Button({ variant = "primary", className = "", children, ...rest 
     danger: "bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-50",
   }[variant];
   return (
-    <button className={`inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition disabled:cursor-not-allowed ${v} ${className}`} {...rest}>
+    <button type={type} className={`inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition disabled:cursor-not-allowed ${v} ${className}`} {...rest}>
       {children}
     </button>
   );
 }
 
-export function Field({ label, hint, error, children }: { label: string; hint?: string; error?: string; children: ReactNode }) {
+export function Field({ label, hint, error, id, children }: { label: string; hint?: string; error?: string; id?: string; children: ReactNode }) {
   return (
-    <label className="block">
+    <label htmlFor={id} className="block">
       <span className="mb-1 block text-sm font-medium text-zinc-700">{label}</span>
       {children}
       {error ? <span className="mt-1 block text-xs text-rose-600">{error}</span> : hint ? <span className="mt-1 block text-xs text-zinc-500">{hint}</span> : null}

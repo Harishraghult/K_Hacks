@@ -32,7 +32,7 @@ export function SenderPanel({ senders, senderId, setSenderId, recipient, setReci
   const [quote, setQuote] = useState<Quote>();
   const [quoteErr, setQuoteErr] = useState<string>();
   const [quoting, setQuoting] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
+  const [secsLeft, setSecsLeft] = useState(0);
   const [sending, setSending] = useState(false);
   const [msg, setMsg] = useState<{ tone: "red" | "amber" | "green"; text: string }>();
   const [depositAmt, setDepositAmt] = useState("200");
@@ -87,10 +87,18 @@ export function SenderPanel({ senders, senderId, setSenderId, recipient, setReci
 
   // Countdown + auto-refresh on expiry.
   useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 500);
+    if (!quote) {
+      setSecsLeft(0);
+      return;
+    }
+    const calc = () => Math.max(0, Math.ceil((quote.expiresAt - Date.now()) / 1000));
+    setSecsLeft(calc());
+    const t = setInterval(() => {
+      const s = calc();
+      setSecsLeft((prev) => (prev !== s ? s : prev));
+    }, 1000);
     return () => clearInterval(t);
-  }, []);
-  const secsLeft = quote ? Math.max(0, Math.ceil((quote.expiresAt - now) / 1000)) : 0;
+  }, [quote]);
   useEffect(() => {
     if (quote && secsLeft === 0 && !quoting && !sending) fetchQuote();
   }, [secsLeft, quote, quoting, sending, fetchQuote]);
@@ -164,6 +172,7 @@ export function SenderPanel({ senders, senderId, setSenderId, recipient, setReci
         </div>
       )}
       <button
+        type="button"
         onClick={send}
         disabled={sendDisabled}
         className={`w-full rounded-2xl bg-emerald-600 font-bold text-white shadow-lg shadow-emerald-600/30 transition hover:bg-emerald-700 disabled:bg-zinc-300 disabled:shadow-none ${compact ? "py-2.5 text-sm" : "py-3.5 text-base"}`}
@@ -180,6 +189,7 @@ export function SenderPanel({ senders, senderId, setSenderId, recipient, setReci
         {senders.map((s) => (
           <button
             key={s.id}
+            type="button"
             onClick={() => setSenderId(s.id)}
             className={`rounded-full px-2.5 py-1 text-[11px] font-medium transition ${s.id === senderId ? "bg-zinc-900 text-white" : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"}`}
           >
@@ -222,6 +232,7 @@ export function SenderPanel({ senders, senderId, setSenderId, recipient, setReci
                 </div>
                 <input value={depositAmt} onChange={(e) => setDepositAmt(e.target.value)} inputMode="decimal" className="w-16 rounded-lg border border-zinc-200 px-2 py-1 text-sm tabular-nums" aria-label="Amount to add" />
                 <button
+                  type="button"
                   disabled={!!busy}
                   onClick={() => action("deposit", () => api("/deposit", { body: { senderId: sender.id, fiatAmount: depositAmt, fiatCurrency: FIAT_LABEL[asset] } }), `Added ${FIAT_LABEL[asset]} ${depositAmt} to your wallet`)}
                   className="whitespace-nowrap rounded-lg bg-zinc-900 px-2.5 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
@@ -231,6 +242,7 @@ export function SenderPanel({ senders, senderId, setSenderId, recipient, setReci
               </div>
             ) : (
               <button
+                type="button"
                 disabled={!!busy}
                 onClick={() => action("kyc", () => api("/kyc/verify", { body: { publicKey: sender.publicKey, name: sender.name } }), "Identity verified. Your wallet is now enabled.")}
                 className="w-full rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"

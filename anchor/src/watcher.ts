@@ -118,6 +118,38 @@ export function startWatcher(book: AccountBook) {
   watcherState.cursor = kvGet(CURSOR_KEY) ?? "now";
   let restarting = false;
 
+  async function catchUp() {
+    try {
+      const cur = kvGet(CURSOR_KEY) ?? watcherState.cursor;
+      let records: PaymentRecord[] = [];
+      if (cur && cur !== "now") {
+        const page = await server.payments().forAccount(book.ANCHOR_RECV.publicKey).cursor(cur).order("asc").limit(50).call();
+        records = page.records as unknown as PaymentRecord[];
+      } else {
+        const page = await server.payments().forAccount(book.ANCHOR_RECV.publicKey).order("desc").limit(20).call();
+        records = (page.records as unknown as PaymentRecord[]).reverse();
+      }
+      if (records.length === 0) return;
+      queue = queue.then(async () => {
+        for (const p of records) {
+          try {
+            await handlePayment(book, p);
+            watcherState.cursor = p.paging_token;
+            watcherState.lastEventAt = Date.now();
+            kvSet(CURSOR_KEY, p.paging_token);
+          } catch (e) {
+            console.error(`[watcher] catch-up failed on op ${p.id}:`, (e as Error).message);
+          }
+        }
+      });
+    } catch {
+      /* ignore transient horizon query errors */
+    }
+  }
+
+  const pollInterval = setInterval(() => void catchUp(), 4000);
+  void catchUp();
+
   const open = () => {
     const gen = ++generation;
     let failed = false;
@@ -180,5 +212,8 @@ export function startWatcher(book: AccountBook) {
   };
 
   open();
-  return () => closeStream?.();
+  return () => {
+    clearInterval(pollInterval);
+    closeStream?.();
+  };
 }

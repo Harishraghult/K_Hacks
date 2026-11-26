@@ -44,7 +44,7 @@ export function AddMoneyDialog({ open, onClose, defaultCurrency }: { open: boole
       <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Add money">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-semibold">Add money</h2>
-          <button onClick={onClose} className="rounded-lg px-2 py-1 text-zinc-500 hover:bg-zinc-100" aria-label="Close">
+          <button type="button" onClick={onClose} className="rounded-lg px-2 py-1 text-zinc-500 hover:bg-zinc-100" aria-label="Close">
             ✕
           </button>
         </div>
@@ -64,11 +64,11 @@ export function AddMoneyDialog({ open, onClose, defaultCurrency }: { open: boole
               </div>
             </div>
             <div className="grid grid-cols-[1fr_110px] gap-2">
-              <Field label="Amount">
-                <Input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" autoFocus />
+              <Field label="Amount" id="add-amount">
+                <Input id="add-amount" name="addAmount" value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" autoFocus />
               </Field>
-              <Field label="Currency">
-                <Select value={currency} onChange={(e) => setCurrency(e.target.value as "AED" | "USD")}>
+              <Field label="Currency" id="add-currency">
+                <Select id="add-currency" name="addCurrency" value={currency} onChange={(e) => setCurrency(e.target.value as "AED" | "USD")}>
                   <option value="AED">AED</option>
                   <option value="USD">USD</option>
                 </Select>
@@ -76,7 +76,7 @@ export function AddMoneyDialog({ open, onClose, defaultCurrency }: { open: boole
             </div>
             <div className="flex gap-2">
               {["100", "500", "1000"].map((v) => (
-                <button key={v} onClick={() => setAmount(v)} className="rounded-lg border border-zinc-200 px-3 py-1 text-xs hover:bg-zinc-50">
+                <button key={v} type="button" onClick={() => setAmount(v)} className="rounded-lg border border-zinc-200 px-3 py-1 text-xs hover:bg-zinc-50">
                   {currency} {v}
                 </button>
               ))}
@@ -142,7 +142,7 @@ export function HomePage() {
         {wallet?.walletStatus === "FAILED" && (
           <Alert tone="error">
             We couldn&apos;t finish setting up your wallet: {wallet.walletError}{" "}
-            <button className="font-semibold underline" onClick={() => api("/me/wallet/retry", { body: {} }).then(refreshWallet)}>
+            <button type="button" className="font-semibold underline" onClick={() => api("/me/wallet/retry", { body: {} }).then(refreshWallet)}>
               Try again
             </button>
           </Alert>
@@ -224,8 +224,8 @@ export function HomePage() {
             <Card className="p-5">
               <h2 className="font-semibold">Quick send</h2>
               <div className="mt-3 flex items-center gap-2 rounded-xl border border-zinc-300 px-3 py-2 focus-within:border-emerald-500">
-                <input value={qAmount} onChange={(e) => setQAmount(e.target.value)} inputMode="decimal" className="w-full bg-transparent text-2xl font-bold tabular-nums outline-none" aria-label="Quick send amount" />
-                <select value={qCur} onChange={(e) => setQCur(e.target.value as "AED" | "USD")} className="rounded-lg bg-zinc-100 px-2 py-1 text-sm font-semibold" aria-label="Quick send currency">
+                <input id="quick-send-amount" name="quickSendAmount" value={qAmount} onChange={(e) => setQAmount(e.target.value)} inputMode="decimal" className="w-full bg-transparent text-2xl font-bold tabular-nums outline-none" aria-label="Quick send amount" />
+                <select id="quick-send-currency" name="quickSendCurrency" value={qCur} onChange={(e) => setQCur(e.target.value as "AED" | "USD")} className="rounded-lg bg-zinc-100 px-2 py-1 text-sm font-semibold" aria-label="Quick send currency">
                   <option value="AED">AED</option>
                   <option value="USD">USD</option>
                 </select>

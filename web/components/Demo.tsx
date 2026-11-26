@@ -46,12 +46,12 @@ export function Demo() {
           )}
           <div className="flex overflow-hidden rounded-lg border border-white/15" role="group" aria-label="Layout">
             {(["auto", "laptop", "projector"] as ViewPref[]).map((v) => (
-              <button key={v} onClick={() => setPref(v)} className={`px-2 py-1 capitalize ${pref === v ? "bg-white/15 text-white" : "text-zinc-400 hover:bg-white/5"}`}>
+              <button key={v} type="button" onClick={() => setPref(v)} className={`px-2 py-1 capitalize ${pref === v ? "bg-white/15 text-white" : "text-zinc-400 hover:bg-white/5"}`}>
                 {v === "auto" ? `Auto (${compact ? "laptop" : "projector"})` : v}
               </button>
             ))}
           </div>
-          <button onClick={() => setAdminOpen(true)} className={`relative rounded-lg border border-white/15 font-semibold text-zinc-200 hover:bg-white/10 ${compact ? "px-2.5 py-1" : "px-3 py-1.5"}`}>
+          <button type="button" onClick={() => setAdminOpen(true)} className={`relative rounded-lg border border-white/15 font-semibold text-zinc-200 hover:bg-white/10 ${compact ? "px-2.5 py-1" : "px-3 py-1.5"}`}>
             Compliance console
             {flaggedCount > 0 && <span className="absolute -right-2 -top-2 rounded-full bg-amber-500 px-1.5 text-[10px] font-bold text-black">{flaggedCount}</span>}
           </button>

@@ -224,7 +224,7 @@ export function CenterPanel({ quote, transfer, transfers, config, health, onSele
 
       <Card title="Micro-remittance: 10 × $5" right={<span className="text-[11px] text-zinc-500">one ledger, ten separate payouts</span>}>
         <div className="flex flex-wrap items-center gap-3">
-          <button onClick={runMicro} disabled={microBusy} className="rounded-xl bg-sky-500 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-600 disabled:opacity-50">
+          <button type="button" onClick={runMicro} disabled={microBusy} className="rounded-xl bg-sky-500 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-600 disabled:opacity-50">
             {microBusy ? <Spinner /> : "Send 10 × $5"}
           </button>
           {batch.length > 0 && config && (
@@ -238,7 +238,7 @@ export function CenterPanel({ quote, transfer, transfers, config, health, onSele
         {batch.length > 0 && (
           <div className="mt-2 flex gap-1">
             {batch.map((b) => (
-              <button key={b.id} onClick={() => onSelect(b.id)} title={`${b.id} ${b.status}`} className={`h-2.5 flex-1 rounded-full ${b.status === "PAYOUT_COMPLETE" ? "bg-emerald-400" : TERMINAL.includes(b.status) ? "bg-rose-500" : "animate-pulse bg-sky-500"}`} />
+              <button key={b.id} type="button" onClick={() => onSelect(b.id)} title={`${b.id} ${b.status}`} className={`h-2.5 flex-1 rounded-full ${b.status === "PAYOUT_COMPLETE" ? "bg-emerald-400" : TERMINAL.includes(b.status) ? "bg-rose-500" : "animate-pulse bg-sky-500"}`} />
             ))}
           </div>
         )}
@@ -248,7 +248,7 @@ export function CenterPanel({ quote, transfer, transfers, config, health, onSele
       <Card title="Recent transfers">
         <div className="divide-y divide-white/5">
           {transfers.slice(0, compact ? 8 : 12).map((x) => (
-            <button key={x.id} onClick={() => onSelect(x.id)} className={`flex w-full items-center justify-between gap-2 py-1.5 text-left text-xs hover:bg-white/5 ${x.id === t?.id ? "bg-white/5" : ""}`}>
+            <button key={x.id} type="button" onClick={() => onSelect(x.id)} className={`flex w-full items-center justify-between gap-2 py-1.5 text-left text-xs hover:bg-white/5 ${x.id === t?.id ? "bg-white/5" : ""}`}>
               <span className="font-mono text-zinc-500">{x.id}</span>
               <span className="truncate text-zinc-300">
                 {x.senderName.split(" ")[0]} → {x.recipient.name.split(" ")[0]} · {FIAT_LABEL[x.sendAsset]} {fmt(x.sendAmount)}

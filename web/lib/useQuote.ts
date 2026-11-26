@@ -8,7 +8,7 @@ export function useQuote(asset: "tAED" | "tUSDC", amount: string, opts: { paused
   const [quote, setQuote] = useState<Quote>();
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
+  const [secsLeft, setSecsLeft] = useState(0);
   const seq = useRef(0);
 
   let amountError: string | undefined;
@@ -47,11 +47,22 @@ export function useQuote(asset: "tAED" | "tUSDC", amount: string, opts: { paused
   }, [refresh]);
 
   useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 500);
+    if (!quote) {
+      setSecsLeft(0);
+      return;
+    }
+    const calc = () => {
+      const maxSecs = Math.round((quote.expiresAt - quote.createdAt) / 1000);
+      return Math.min(maxSecs, Math.max(0, Math.ceil((quote.expiresAt - Date.now()) / 1000)));
+    };
+    setSecsLeft(calc());
+    const t = setInterval(() => {
+      const s = calc();
+      setSecsLeft((prev) => (prev !== s ? s : prev));
+    }, 1000);
     return () => clearInterval(t);
-  }, []);
+  }, [quote]);
 
-  const secsLeft = quote ? Math.min(Math.round((quote.expiresAt - quote.createdAt) / 1000), Math.max(0, Math.ceil((quote.expiresAt - now) / 1000))) : 0;
   useEffect(() => {
     if (quote && secsLeft === 0 && !loading && !opts.paused) refresh();
   }, [secsLeft, quote, loading, opts.paused, refresh]);

@@ -102,7 +102,7 @@ export function ActivityPage() {
     if (id) setSelected(id);
   }, []);
   const list = transfers.filter(FILTERS.find((f) => f.key === filter)!.match);
-  const current = transfers.find((t) => t.id === selected) ?? list[0];
+  const current = list.find((t) => t.id === selected) ?? list[0];
 
   return (
     <Shell title="Activity">
@@ -110,7 +110,7 @@ export function ActivityPage() {
         <Card>
           <div className="flex gap-2 border-b border-zinc-100 px-4 py-3">
             {FILTERS.map((f) => (
-              <button key={f.key} onClick={() => setFilter(f.key)} className={`rounded-full px-3 py-1 text-sm font-medium ${filter === f.key ? "bg-zinc-900 text-white" : "text-zinc-600 hover:bg-zinc-100"}`}>
+              <button key={f.key} type="button" onClick={() => setFilter(f.key)} className={`rounded-full px-3 py-1 text-sm font-medium ${filter === f.key ? "bg-zinc-900 text-white" : "text-zinc-600 hover:bg-zinc-100"}`}>
                 {f.label} <span className="opacity-60">{transfers.filter(f.match).length}</span>
               </button>
             ))}
@@ -118,7 +118,18 @@ export function ActivityPage() {
           <ul className="max-h-[calc(100vh-220px)] divide-y divide-zinc-100 overflow-y-auto">
             {list.map((t) => (
               <li key={t.id}>
-                <button onClick={() => setSelected(t.id)} className={`flex w-full items-center gap-4 px-4 py-3 text-left hover:bg-zinc-50 ${current?.id === t.id ? "bg-emerald-50/60" : ""}`}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelected(t.id);
+                    if (typeof window !== "undefined") {
+                      const url = new URL(window.location.href);
+                      url.searchParams.set("id", t.id);
+                      window.history.replaceState(null, "", url.toString());
+                    }
+                  }}
+                  className={`flex w-full items-center gap-4 px-4 py-3 text-left hover:bg-zinc-50 ${current?.id === t.id ? "bg-emerald-50/60" : ""}`}
+                >
                   <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-zinc-100 font-semibold">{t.recipient.name[0]}</span>
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-semibold">{t.recipient.name}</div>
@@ -211,6 +222,7 @@ export function AccountPage() {
           <div className="mt-3 flex items-center gap-2 rounded-xl bg-zinc-50 p-3">
             <code className="min-w-0 flex-1 truncate text-xs">{user.walletAddress}</code>
             <button
+              type="button"
               onClick={() => {
                 navigator.clipboard.writeText(user.walletAddress);
                 setCopied(true);
