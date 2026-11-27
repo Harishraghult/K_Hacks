@@ -7,3 +7,4 @@ export * from "./stellar";
 export * from "./router";
 export * from "./transfer";
 export * from "./liquidity";
+export * from "./corridors";

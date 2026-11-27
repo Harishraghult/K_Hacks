@@ -1,18 +1,19 @@
 "use client";
 import { useCallback, useMemo, useState } from "react";
-import type { Quote } from "@/lib/api";
+import type { AssetCode, Quote } from "@/lib/api";
 import { useLive } from "@/lib/useLive";
 import { useView, type ViewPref } from "@/lib/view";
 import { AdminDrawer } from "./AdminDrawer";
 import { CenterPanel } from "./CenterPanel";
 import { RecipientPanel } from "./RecipientPanel";
-import { SenderPanel, type RecipientForm } from "./SenderPanel";
+import { RECIPIENT_PRESETS, SenderPanel, toRecipient, type RecipientForm } from "./SenderPanel";
 
 export function Demo() {
   const live = useLive();
   const { compact, pref, setPref } = useView();
   const [senderId, setSenderId] = useState("SENDER_1");
-  const [recipient, setRecipient] = useState<RecipientForm>({ name: "Lakshmi Kumar", upiId: "lakshmi@okaxis", purpose: "Family support" });
+  const [dest, setDest] = useState<AssetCode>("tINR");
+  const [recipient, setRecipient] = useState<RecipientForm>(RECIPIENT_PRESETS.tINR);
   const [quote, setQuote] = useState<Quote>();
   const [focusId, setFocusId] = useState<string>();
   const [batchIds, setBatchIds] = useState<string[]>([]);
@@ -40,7 +41,7 @@ export function Demo() {
           {h && <Dot ok={h.watcher.connected} label="payout watcher" />}
           {h && (
             <span>
-              1 USD = ₹{h.fx.inrPerUsd}{compact ? "" : ` · 1 USD = AED ${h.fx.aedPerUsd}`}{" "}
+              1 USD = ₹{h.fx.inrPerUsd} · €{h.fx.rates?.EUR} · ¥{h.fx.rates?.JPY}{compact ? "" : ` · £${h.fx.rates?.GBP}`}{" "}
               <span className={h.fx.source === "fallback" ? "text-amber-400" : ""}>({compact ? h.fx.asOf : `rate as of ${h.fx.asOf}`})</span>
             </span>
           )}
@@ -67,6 +68,8 @@ export function Demo() {
 
       <main className={`grid grid-cols-1 items-start ${compact ? "gap-3 lg:grid-cols-[minmax(280px,330px)_1fr_minmax(280px,330px)]" : "gap-5 lg:grid-cols-[minmax(320px,380px)_1fr_minmax(320px,380px)]"}`}>
         <SenderPanel
+          dest={dest}
+          setDest={setDest}
           senders={live.senders}
           senderId={senderId}
           setSenderId={setSenderId}
@@ -84,7 +87,7 @@ export function Demo() {
           config={live.config}
           health={h}
           onSelect={setFocusId}
-          micro={{ senderId, recipient: { name: recipient.name, upiId: recipient.upiId } }}
+          micro={{ senderId, dest, recipient: toRecipient(dest, recipient) }}
           batchIds={batchIds}
           onBatch={(ids) => {
             setBatchIds(ids);
@@ -92,7 +95,7 @@ export function Demo() {
           }}
           allTransfers={live.transfers}
         />
-        <RecipientPanel name={recipient.name} upiId={recipient.upiId} transfers={list} />
+        <RecipientPanel dest={dest} recipient={recipient} transfers={list} />
       </main>
 
       <AdminDrawer

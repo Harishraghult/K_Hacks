@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { Asset, Keypair } from "@stellar/stellar-sdk";
+import { Asset, Keypair, LiquidityPoolAsset, Operation, type xdr } from "@stellar/stellar-sdk";
 import { ACCOUNT_NAMES, ISSUER_FOR, type AccountName, type AssetCode } from "./constants";
 
 export interface AccountEntry {
@@ -57,6 +57,14 @@ export function keypair(book: AccountBook, name: AccountName): Keypair {
 
 export function assetOf(book: AccountBook, code: AssetCode): Asset {
   return new Asset(code, book[ISSUER_FOR[code]].publicKey);
+}
+
+/**
+ * changeTrust built with the SAME SDK copy that constructed the asset. Under tsx the scripts workspace can load
+ * the SDK's ESM build while this package gets the CJS build, and changeTrust checks `instanceof Asset`.
+ */
+export function changeTrustOp(asset: Asset | LiquidityPoolAsset): xdr.Operation {
+  return Operation.changeTrust({ asset });
 }
 
 export function codeOfAsset(book: AccountBook, a: { asset_code?: string; asset_issuer?: string; asset_type: string }): AssetCode | undefined {

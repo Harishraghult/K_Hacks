@@ -1,4 +1,4 @@
-import { Horizon, Keypair, TransactionBuilder, BASE_FEE, type xdr, type Memo } from "@stellar/stellar-sdk";
+import { Horizon, Keypair, TransactionBuilder, BASE_FEE, type xdr, Memo } from "@stellar/stellar-sdk";
 import { HORIZON_URL, NETWORK_PASSPHRASE, TX_TIMEOUT_SEC, MAX_FEE_STROOPS } from "./constants";
 import { StellarTxError, extractResultCodes, friendlyMessage } from "./errors";
 
@@ -51,7 +51,8 @@ async function baseFee(): Promise<number> {
 export async function submitOps(
   source: Keypair,
   ops: xdr.Operation[],
-  opts: { signers?: Keypair[]; memo?: Memo; onHash?: (hash: string) => void } = {},
+  /** memo: TEXT memo (≤28 bytes). A string, not an SDK Memo: callers in other workspaces may load a different SDK build. */
+  opts: { signers?: Keypair[]; memo?: string; onHash?: (hash: string) => void } = {},
 ): Promise<SubmitResult> {
   return withAccountLock(source.publicKey(), async () => {
     let fee = await baseFee();
@@ -63,7 +64,7 @@ export async function submitOps(
         TX_TIMEOUT_SEC,
       );
       ops.forEach((op) => b.addOperation(op));
-      if (opts.memo) b.addMemo(opts.memo);
+      if (opts.memo) b.addMemo(Memo.text(opts.memo));
       const tx = b.build();
       tx.sign(source, ...(opts.signers ?? []));
       const hash = Buffer.from(tx.hash()).toString("hex");

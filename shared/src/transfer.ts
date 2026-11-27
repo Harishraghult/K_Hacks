@@ -1,4 +1,5 @@
 import type { AssetCode } from "./constants";
+import type { RailRecipient } from "./corridors";
 import { Big } from "./money";
 
 export const STATUSES = [
@@ -54,12 +55,8 @@ export const TERMINAL: TransferStatus[] = STATUSES.filter((s) => TRANSITIONS[s].
 /** Statuses whose amount does NOT count toward the daily limit. */
 export const NON_COUNTING: TransferStatus[] = ["BLOCKED", "EXPIRED", "ON_CHAIN_FAILED", "REFUNDED"];
 
-export interface Recipient {
-  name: string;
-  upiId?: string;
-  bankAcct?: string;
-  ifsc?: string;
-}
+/** Beneficiary + payout-rail details (UPI, IFSC, ABA, IBAN, sort code, Zengin, BSB, Interac, PayNow, GCash, CLABE). */
+export type Recipient = RailRecipient;
 
 export interface TravelRule {
   originatorName: string;
@@ -143,5 +140,7 @@ export function newTransferId(prefix: "T" | "B" = "T"): string {
 
 /** Simulated payout outcome (pure, testable). */
 export function payoutShouldFail(r: Recipient): boolean {
-  return r.upiId?.toLowerCase() === "fail@upi" || (r.bankAcct?.endsWith("0000") ?? false);
+  // Mock bank: rejects fail@… handles, and any account / IBAN / CLABE / mobile ending in 0000.
+  if (r.upiId?.toLowerCase() === "fail@upi" || r.email?.toLowerCase().startsWith("fail@")) return true;
+  return [r.bankAcct, r.iban, r.clabe, r.mobile].some((v) => v?.replace(/[\s-]/g, "").endsWith("0000"));
 }

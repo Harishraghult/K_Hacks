@@ -3,16 +3,21 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Big, fmt } from "@remit/shared/money";
-import { api, type AppConfig, type Health } from "@/lib/api";
+import { api, type AppConfig, type FiatCode, type Health } from "@/lib/api";
 import { useQuote } from "@/lib/useQuote";
 import { useSession } from "@/lib/session";
-import { Alert, ASSET_OF, Button, Card, CUR, Field, Input, Pill, Select, Spinner, dateTime, recipientLine } from "./kit";
+import { Alert, ASSET_OF, Button, Card, CUR, CurrencySelect, FIATS, Field, Input, Pill, Spinner, amt, dateTime, recipientLine } from "./kit";
+
+/** USD value of 1 unit of an asset at the FX mid. */
+function usdPerAsset(asset: string, fx: { rates: Record<string, string> }) {
+  return new Big(1).div(fx.rates[CUR[asset]] ?? "1");
+}
 import { Shell } from "./Shell";
 
-export function AddMoneyDialog({ open, onClose, defaultCurrency }: { open: boolean; onClose: () => void; defaultCurrency: "AED" | "USD" }) {
+export function AddMoneyDialog({ open, onClose, defaultCurrency }: { open: boolean; onClose: () => void; defaultCurrency: FiatCode }) {
   const { wallet, refreshWallet } = useSession();
   const [amount, setAmount] = useState("200");
-  const [currency, setCurrency] = useState<"AED" | "USD">(defaultCurrency);
+  const [currency, setCurrency] = useState<FiatCode>(defaultCurrency);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [done, setDone] = useState<string>();
@@ -68,14 +73,11 @@ export function AddMoneyDialog({ open, onClose, defaultCurrency }: { open: boole
                 <Input id="add-amount" name="addAmount" value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" autoFocus />
               </Field>
               <Field label="Currency" id="add-currency">
-                <Select id="add-currency" name="addCurrency" value={currency} onChange={(e) => setCurrency(e.target.value as "AED" | "USD")}>
-                  <option value="AED">AED</option>
-                  <option value="USD">USD</option>
-                </Select>
+                <CurrencySelect id="add-currency" value={currency} onChange={setCurrency} label="code" className="w-full rounded-xl border border-zinc-300 bg-white px-3 py-2.5 text-sm" />
               </Field>
             </div>
             <div className="flex gap-2">
-              {["100", "500", "1000"].map((v) => (
+              {(["INR", "JPY", "PHP"].includes(currency) ? ["5000", "20000", "50000"] : ["100", "500", "1000"]).map((v) => (
                 <button key={v} type="button" onClick={() => setAmount(v)} className="rounded-lg border border-zinc-200 px-3 py-1 text-xs hover:bg-zinc-50">
                   {currency} {v}
                 </button>
@@ -109,20 +111,25 @@ export function HomePage() {
   const [addOpen, setAddOpen] = useState(false);
   const cur = user?.sendCurrency ?? "AED";
   const [qAmount, setQAmount] = useState("100");
-  const [qCur, setQCur] = useState<"AED" | "USD">(cur);
-  useEffect(() => setQCur(cur), [cur]);
-  const { quote, loading, amountError } = useQuote(ASSET_OF[qCur], qAmount);
+  const [qCur, setQCur] = useState<FiatCode>(cur);
+  const [qTo, setQTo] = useState<FiatCode>(cur === "INR" ? "USD" : "INR");
+  useEffect(() => {
+    setQCur(cur);
+    setQTo(cur === "INR" ? "USD" : "INR");
+    if (["INR", "JPY", "PHP"].includes(cur)) setQAmount(cur === "PHP" ? "5000" : "10000");
+  }, [cur]);
+  const { quote, loading, amountError } = useQuote(ASSET_OF[qCur], qAmount, ASSET_OF[qTo]);
   const { config, fx } = useRates();
 
-  // "You saved" vs a typical bank wire (illustrative fee %, actual received amounts).
+  // "You saved" vs a typical bank wire (illustrative fee %, actual received amounts), summed in USD across corridors.
   const saved =
     config && fx
       ? transfers
           .filter((t) => t.status === "PAYOUT_COMPLETE" && t.receivedAmount)
           .reduce((acc, t) => {
-            const mid = new Big(fx.inrPerUsd).times(t.sendAsset === "tUSDC" ? 1 : new Big(1).div(fx.aedPerUsd));
+            const mid = usdPerAsset(t.sendAsset, fx).div(usdPerAsset(t.destAsset, fx));
             const trad = new Big(t.sendAmount).times(mid).times(new Big(1).minus(new Big(config.traditional.FEE_PCT).div(100)));
-            return acc.plus(new Big(t.receivedAmount!).minus(trad));
+            return acc.plus(new Big(t.receivedAmount!).minus(trad).times(usdPerAsset(t.destAsset, fx)));
           }, new Big(0))
       : undefined;
   const sentCount = transfers.filter((t) => t.status === "PAYOUT_COMPLETE").length;
@@ -163,8 +170,11 @@ export function HomePage() {
         <div className="grid grid-cols-1 gap-5 xl:grid-cols-[1fr_380px]">
           <div className="space-y-5">
             {/* balances */}
-            <div className="grid grid-cols-3 gap-4">
-              {(["tAED", "tUSDC"] as const).map((code) => {
+            <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+              {/* home currency first, then any other currency they hold (up to 3 cards) */}
+              {[ASSET_OF[cur], ...Object.entries(wallet?.balances ?? {}).filter(([c, b]) => c !== ASSET_OF[cur] && Number(b.balance) > 0).map(([c]) => c as typeof ASSET_OF[FiatCode])]
+                .slice(0, 3)
+                .map((code) => {
                 const b = wallet?.balances?.[code];
                 return (
                   <Card key={code} className="p-5">
@@ -205,7 +215,7 @@ export function HomePage() {
                         </div>
                       </div>
                       <div className="text-right">
-                        <div className="text-sm font-semibold tabular-nums">₹{fmt(t.receivedAmount ?? t.quotedDest)}</div>
+                        <div className="text-sm font-semibold tabular-nums">{amt(t.destAsset, t.receivedAmount ?? t.quotedDest)}</div>
                         <div className="text-xs text-zinc-500 tabular-nums">
                           {CUR[t.sendAsset]} {fmt(t.sendAmount)}
                         </div>
@@ -225,21 +235,30 @@ export function HomePage() {
               <h2 className="font-semibold">Quick send</h2>
               <div className="mt-3 flex items-center gap-2 rounded-xl border border-zinc-300 px-3 py-2 focus-within:border-emerald-500">
                 <input id="quick-send-amount" name="quickSendAmount" value={qAmount} onChange={(e) => setQAmount(e.target.value)} inputMode="decimal" className="w-full bg-transparent text-2xl font-bold tabular-nums outline-none" aria-label="Quick send amount" />
-                <select id="quick-send-currency" name="quickSendCurrency" value={qCur} onChange={(e) => setQCur(e.target.value as "AED" | "USD")} className="rounded-lg bg-zinc-100 px-2 py-1 text-sm font-semibold" aria-label="Quick send currency">
-                  <option value="AED">AED</option>
-                  <option value="USD">USD</option>
-                </select>
+                <CurrencySelect
+                  id="quick-send-currency"
+                  label="code"
+                  value={qCur}
+                  onChange={(c) => {
+                    setQCur(c);
+                    if (c === qTo) setQTo(FIATS.find((f) => f !== c)!);
+                  }}
+                  className="rounded-lg bg-zinc-100 px-2 py-1 text-sm font-semibold"
+                />
               </div>
               <div className="mt-3 rounded-xl bg-emerald-50 p-3">
-                <div className="text-xs text-emerald-800">They receive</div>
-                <div className="text-2xl font-bold tabular-nums text-emerald-900">{amountError ? "—" : quote ? `₹${fmt(quote.best.destAmount)}` : loading ? <Spinner /> : "—"}</div>
+                <div className="flex items-center justify-between text-xs text-emerald-800">
+                  <span>They receive</span>
+                  <CurrencySelect value={qTo} onChange={setQTo} exclude={qCur} label="code" className="rounded-md bg-white/70 px-1.5 py-0.5 font-semibold" />
+                </div>
+                <div className="text-2xl font-bold tabular-nums text-emerald-900">{amountError ? "—" : quote ? amt(ASSET_OF[qTo], quote.best.destAmount) : loading ? <Spinner /> : "—"}</div>
                 {quote && (
                   <div className="text-xs text-emerald-900/70">
-                    1 {qCur} = ₹{fmt(quote.effectiveRate, 4)} · no transfer fee
+                    1 {qCur} = {amt(ASSET_OF[qTo], quote.effectiveRate, 4)} · no transfer fee
                   </div>
                 )}
               </div>
-              <Button className="mt-3 w-full py-3" disabled={!!amountError} onClick={() => router.push(`/send?amount=${encodeURIComponent(qAmount)}&cur=${qCur}`)}>
+              <Button className="mt-3 w-full py-3" disabled={!!amountError} onClick={() => router.push(`/send?amount=${encodeURIComponent(qAmount)}&cur=${qCur}&to=${qTo}`)}>
                 Continue
               </Button>
             </Card>
@@ -247,7 +266,7 @@ export function HomePage() {
             {/* savings */}
             <Card className="bg-zinc-900 p-5 text-white">
               <div className="text-xs uppercase tracking-wide text-zinc-400">You&apos;ve saved</div>
-              <div className="mt-1 text-3xl font-bold tabular-nums text-emerald-400">₹{saved ? fmt(saved.gt(0) ? saved : 0) : "0.00"}</div>
+              <div className="mt-1 text-3xl font-bold tabular-nums text-emerald-400">${saved ? fmt(saved.gt(0) ? saved : 0) : "0.00"}</div>
               <div className="mt-1 text-xs text-zinc-400">
                 across {sentCount} delivered transfer{sentCount === 1 ? "" : "s"}, compared with a typical bank wire ({config?.traditional.FEE_PCT ?? "6.4"}% in fees and FX markup, World Bank average, illustrative).
               </div>

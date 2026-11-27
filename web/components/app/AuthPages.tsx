@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { api } from "@/lib/api";
 import { useSession, type Profile } from "@/lib/session";
+import { CURRENCY_LIST, type Country } from "@remit/shared/corridors";
 import { Alert, Button, Field, Input, Select, Spinner } from "./kit";
 import { Logo } from "./Shell";
 
@@ -16,14 +17,14 @@ function AuthLayout({ children }: { children: ReactNode }) {
         <Logo light />
         <div className="relative max-w-md">
           <h2 className="text-4xl font-bold leading-tight tracking-tight">
-            Send money home in seconds.
+            Move money across borders in seconds.
             <br />
             <span className="text-emerald-400">Keep what you earn.</span>
           </h2>
           <ul className="mt-8 space-y-4 text-sm text-zinc-300">
             {[
               ["No transfer fee", "Network cost is a fraction of a cent, not 6–8%."],
-              ["Arrives in about 10 seconds", "Straight to UPI or any Indian bank account."],
+              ["Arrives in about 10 seconds", `${CURRENCY_LIST.length} currencies, every direction: ${CURRENCY_LIST.map((c) => c.fiat).join(", ")}. UPI, ACH, SEPA, Faster Payments, Zengin, Interac, PayNow, GCash, SPEI…`],
               ["Best rate, locked in", "We compare routes and guarantee a minimum amount."],
               ["Regulated and safe", "Identity checks and sanctions screening on every transfer."],
             ].map(([a, b]) => (
@@ -58,6 +59,9 @@ function useRedirectIfSignedIn() {
 const DEMO = [
   { u: "ravi", p: "ravi1234", note: "Dubai · verified, has balance" },
   { u: "maria", p: "maria1234", note: "Houston · verified, sends USD" },
+  { u: "priya", p: "priya1234", note: "Bengaluru · verified, sends INR" },
+  { u: "emma", p: "emma1234", note: "Berlin · verified, sends EUR" },
+  { u: "kenji", p: "kenji1234", note: "Tokyo · verified, sends JPY" },
   { u: "newuser", p: "newuser1234", note: "not verified yet" },
   { u: "watchlisted", p: "watch1234", note: "on a sanctions list" },
 ];
@@ -93,7 +97,7 @@ export function LoginPage() {
         <Logo />
       </div>
       <h1 className="text-2xl font-bold tracking-tight">Welcome back</h1>
-      <p className="mt-1 text-sm text-zinc-500">Sign in to send money home.</p>
+      <p className="mt-1 text-sm text-zinc-500">Sign in to send money across borders.</p>
       <form onSubmit={submit} className="mt-8 space-y-4">
         <Field label="Username">
           <Input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" autoFocus required />
@@ -153,7 +157,7 @@ export function SignupPage() {
   useRedirectIfSignedIn();
   const { setUser } = useSession();
   const router = useRouter();
-  const [f, setF] = useState({ fullName: "", username: "", password: "", confirm: "", country: "AE" as "AE" | "US" });
+  const [f, setF] = useState({ fullName: "", username: "", password: "", confirm: "", country: "AE" as Country });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
 
@@ -193,9 +197,12 @@ export function SignupPage() {
           <Input value={f.username} onChange={(e) => setF({ ...f, username: e.target.value.toLowerCase() })} autoComplete="username" required />
         </Field>
         <Field label="Where do you live?">
-          <Select value={f.country} onChange={(e) => setF({ ...f, country: e.target.value as "AE" | "US" })}>
-            <option value="AE">United Arab Emirates (send in AED)</option>
-            <option value="US">United States (send in USD)</option>
+          <Select value={f.country} onChange={(e) => setF({ ...f, country: e.target.value as Country })}>
+            {CURRENCY_LIST.map((c) => (
+              <option key={c.country} value={c.country}>
+                {c.flag} {c.countryName} (send in {c.fiat})
+              </option>
+            ))}
           </Select>
         </Field>
         <div>

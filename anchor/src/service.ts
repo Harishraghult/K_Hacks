@@ -1,10 +1,16 @@
-import { Memo } from "@stellar/stellar-sdk";
 import {
-  ASSET_CODES,
   COMPLIANCE,
+  CURRENCY,
+  RAILS,
+  RAIL_FIELDS,
   StellarTxError,
   applySlippage,
   assetOf,
+  beneficiaryAccount,
+  fmt,
+  normalizeIban,
+  railOf,
+  recipientLine,
   evaluateCompliance,
   getFx,
   getQuote,
@@ -18,6 +24,7 @@ import {
   toUsd,
   Big,
   type AccountBook,
+  type AssetCode,
   type AccountName,
   type Quote,
   type Recipient,
@@ -54,18 +61,23 @@ export const isSanctioned = (subject: string | undefined) =>
 
 // ---------------- compliance ----------------
 
-async function complianceFor(book: AccountBook, row: Pick<TransferRow, "id" | "sender_id" | "sender_pub" | "send_asset" | "usd_equiv">, recipient: Recipient, opts: { extraUsdToday?: string } = {}) {
+/** Any identifier of the beneficiary that could be on a watchlist. */
+export function recipientOnList(r: Recipient): boolean {
+  return isSanctioned(r.name) || RAIL_FIELDS.some((k) => isSanctioned(k === "iban" && r.iban ? normalizeIban(r.iban) : r[k]));
+}
+
+async function complianceFor(book: AccountBook, row: Pick<TransferRow, "id" | "sender_id" | "sender_pub" | "send_asset" | "dest_asset" | "usd_equiv">, recipient: Recipient, opts: { extraUsdToday?: string } = {}) {
   const [senderLines, recvLines] = await Promise.all([
     trustlines(book, row.sender_pub, [row.send_asset]),
-    trustlines(book, book.ANCHOR_RECV.publicKey, [ASSET_CODES.INR]),
+    trustlines(book, book.ANCHOR_RECV.publicKey, [row.dest_asset]),
   ]);
   const used = new Big(usdUsedToday(row.sender_id, row.id)).plus(opts.extraUsdToday ?? "0").toFixed(7);
   return evaluateCompliance({
     senderKycPassed: kycPassed(row.sender_pub),
     senderAuthorizedOnChain: senderLines[row.send_asset].authorized,
-    receiverAnchorAuthorizedOnChain: recvLines[ASSET_CODES.INR].authorized,
+    receiverAnchorAuthorizedOnChain: recvLines[row.dest_asset].authorized,
     senderSanctioned: isSanctioned(row.sender_pub),
-    recipientSanctioned: isSanctioned(recipient.upiId) || isSanctioned(recipient.bankAcct) || isSanctioned(recipient.name),
+    recipientSanctioned: recipientOnList(recipient),
     usdAmount: row.usd_equiv,
     usdUsedToday: used,
     reviewThresholdUsd: COMPLIANCE.REVIEW_THRESHOLD_USD,
@@ -108,7 +120,7 @@ export async function createTransfer(book: AccountBook, i: CreateInput): Promise
       originatorName: senderName(i.senderId),
       originatorAccount: pub,
       beneficiaryName: i.recipient.name,
-      beneficiaryAccount: i.recipient.upiId ?? i.recipient.bankAcct ?? "",
+      beneficiaryAccount: beneficiaryAccount(i.recipient),
       purpose: i.purpose,
     },
   });
@@ -141,7 +153,7 @@ async function submitSingle(book: AccountBook, id: string) {
     const res = await submitOps(senderSigner(book, row.sender_id), [
       pathPaymentOp(hops, row.send_amount, book.ANCHOR_RECV.publicKey, row.dest_min),
     ], {
-      memo: Memo.text(row.id),
+      memo: row.id,
       onHash: (hash) => {
         // Record the hash before submitting so a restart can look it up instead of resending.
         if (getRow(id)!.status === "APPROVED") transition(id, "SUBMITTED", { tx_hash: hash }, `tx ${hash.slice(0, 10)}…`);
@@ -196,7 +208,7 @@ export async function runBatch(book: AccountBook, rows: TransferRow[], batchId: 
   try {
     const ops = approved.map((r) => pathPaymentOp(JSON.parse(r.path_json), r.send_amount, book.ANCHOR_RECV.publicKey, r.dest_min));
     const res = await submitOps(senderSigner(book, sender), ops, {
-      memo: Memo.text(batchId),
+      memo: batchId,
       onHash: (hash) => approved.forEach((r) => getRow(r.id)!.status === "APPROVED" && transition(r.id, "SUBMITTED", { tx_hash: hash }, `batch tx ${hash.slice(0, 10)}…`)),
     });
     const perOp = new Big(res.feeCharged).div(approved.length).toFixed(0);
@@ -241,7 +253,14 @@ export function expireStaleReviews() {
 
 const payoutsInFlight = new Set<string>();
 
-/** Simulated UPI / bank credit. Idempotent: only acts on PAYOUT_PENDING, once per process. */
+/** Simulated payout reference in the destination rail's format. */
+function payoutReference(dest: AssetCode, r: Recipient): string {
+  const rail = railOf(dest, r) ?? "UPI";
+  const digits = (n: number) => Array.from({ length: n }, () => Math.floor(Math.random() * 10)).join("");
+  return `${RAILS[rail].refPrefix}${Date.now().toString().slice(-8)}${digits(rail === "US_ACH" ? 7 : 4)}`;
+}
+
+/** Simulated local payout (UPI / IMPS in India, ACH in the US, UAEFTS in the UAE). Idempotent: only acts on PAYOUT_PENDING, once per process. */
 export async function runPayout(book: AccountBook, id: string) {
   if (payoutsInFlight.has(id)) return;
   payoutsInFlight.add(id);
@@ -251,19 +270,21 @@ export async function runPayout(book: AccountBook, id: string) {
     const recipient = JSON.parse(row.recipient_json) as Recipient;
     await sleep(1000 + Math.floor(Math.random() * 2000)); // rail latency
     if (getRow(id)!.status !== "PAYOUT_PENDING") return;
+    const rail = RAILS[railOf(row.dest_asset, recipient) ?? "UPI"];
     if (payoutShouldFail(recipient)) {
-      transition(id, "PAYOUT_FAILED", { error_code: "PAYOUT_REJECTED", error_message: "Beneficiary bank rejected the credit (invalid/closed account)" }, "UPI/bank rail rejected credit");
+      transition(id, "PAYOUT_FAILED", { error_code: "PAYOUT_REJECTED", error_message: "Beneficiary bank rejected the credit (invalid/closed account)" }, `${rail.short} rail rejected credit`);
       await runRefund(book, id);
       return;
     }
-    const utr = `UTR${Date.now().toString().slice(-8)}${Math.floor(Math.random() * 1e4).toString().padStart(4, "0")}`;
-    transition(id, "PAYOUT_COMPLETE", { payout_ref: utr }, `₹${row.received_amount} credited to ${recipient.upiId ?? recipient.bankAcct}, ref ${utr}`);
+    const ref = payoutReference(row.dest_asset, recipient);
+    const amt = `${CURRENCY[row.dest_asset].symbol}${fmt(row.received_amount ?? row.quoted_dest, CURRENCY[row.dest_asset].dp)}`;
+    transition(id, "PAYOUT_COMPLETE", { payout_ref: ref }, `${amt} credited via ${rail.short} to ${recipientLine(recipient)}, ${rail.refName} ${ref}`);
   } finally {
     payoutsInFlight.delete(id);
   }
 }
 
-/** Refund: ANCHOR_RECV path-pays the received tINR back to the sender in their original asset. */
+/** Refund: ANCHOR_RECV path-pays the received destination asset back to the sender in their original asset. */
 export async function runRefund(book: AccountBook, id: string) {
   let row = getRow(id)!;
   if (row.status === "PAYOUT_FAILED") row = transition(id, "REFUND_PENDING", {}, "Returning funds to sender");
@@ -279,16 +300,16 @@ export async function runRefund(book: AccountBook, id: string) {
   }
   try {
     const amount = row.received_amount ?? row.quoted_dest;
-    const paths = await server.strictSendPaths(assetOf(book, "tINR"), amount, [assetOf(book, row.send_asset)]).call();
+    const paths = await server.strictSendPaths(assetOf(book, row.dest_asset), amount, [assetOf(book, row.send_asset)]).call();
     const best = [...paths.records].sort((a, b) => new Big(b.destination_amount).comparedTo(a.destination_amount) ?? 0)[0];
     if (!best) throw new Error("No liquidity to refund");
     const hops = [
-      { code: "tINR", issuer: book.ISSUER_INR.publicKey },
+      { code: row.dest_asset, issuer: assetOf(book, row.dest_asset).getIssuer() },
       ...best.path.map((p) => (p.asset_type === "native" ? { code: "XLM" } : { code: p.asset_code!, issuer: p.asset_issuer! })),
       { code: row.send_asset, issuer: assetOf(book, row.send_asset).getIssuer() },
     ];
     const res = await submitOps(keypair(book, "ANCHOR_RECV"), [pathPaymentOp(hops, amount, row.sender_pub, applySlippage(best.destination_amount, 200))], {
-      memo: Memo.text(`R${row.id}`.slice(0, 28)),
+      memo: `R${row.id}`.slice(0, 28),
       onHash: (hash) => patchRow(id, { refund_tx: hash }),
     });
     const [delivered] = await deliveredAmounts(res.hash);

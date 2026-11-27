@@ -1,13 +1,14 @@
 import { Asset, LiquidityPoolAsset, LiquidityPoolFeeV18, Operation, getLiquidityPoolId } from "@stellar/stellar-sdk";
 import { assetOf, keypair, type AccountBook } from "./accounts";
 import type { AssetCode } from "./constants";
+import { CURRENCY_LIST } from "./corridors";
 import type { FxSnapshot } from "./fx";
 import { Big, toStellar } from "./money";
 import { server, submitOps } from "./stellar";
 
 /**
- * Mock market maker. One-directional remittance flow (AED/USD in, INR out) pushes AMM prices away from
- * the FX mid; on mainnet arbitrageurs pull them back. On testnet nobody does, so the market maker,
+ * Mock market maker. Remittance flow is lopsided per corridor (e.g. far more AED→INR than INR→AED), which
+ * pushes AMM prices away from the FX mid; on mainnet arbitrageurs pull them back. On testnet nobody does, so the market maker,
  * which owns 100% of the pool shares, withdraws and re-deposits at the live FX mid in one atomic tx.
  */
 export interface PoolSpec {
@@ -19,10 +20,13 @@ export interface PoolSpec {
   depthX: string;
 }
 
-export const POOLS: PoolSpec[] = [
-  { x: "tUSDC", y: "tINR", target: (fx) => fx.inrPerUsd, depthX: "500000" },
-  { x: "tUSDC", y: "tAED", target: (fx) => fx.aedPerUsd, depthX: "400000" },
-];
+/** Hub-and-spoke: one tUSDC/tX pool per currency, so any pair routes X → USDC → Y in one path payment. */
+export const POOLS: PoolSpec[] = CURRENCY_LIST.filter((c) => c.asset !== "tUSDC").map((c) => ({
+  x: "tUSDC" as AssetCode,
+  y: c.asset,
+  target: (fx: FxSnapshot) => fx.rates[c.fiat],
+  depthX: c.poolDepthUsd,
+}));
 
 export function poolInfo(book: AccountBook, x: AssetCode, y: AssetCode) {
   const [a, b] = Asset.compare(assetOf(book, x), assetOf(book, y)) <= 0 ? [assetOf(book, x), assetOf(book, y)] : [assetOf(book, y), assetOf(book, x)];

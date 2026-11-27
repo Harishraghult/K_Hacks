@@ -51,12 +51,8 @@ export function hopToAsset(h: PathHop): Asset {
 
 /** Units of `to` per 1 unit of `from`, at mid-market. */
 export function midRate(fx: FxSnapshot, from: AssetCode, to: AssetCode): string {
-  const usdPer: Record<string, Big> = {
-    USD: new Big(1),
-    AED: new Big(1).div(fx.aedPerUsd),
-    INR: new Big(1).div(fx.inrPerUsd),
-  };
-  return usdPer[FIAT_FOR_ASSET[from]].div(usdPer[FIAT_FOR_ASSET[to]]).toString();
+  // units of `to` per 1 `from` = (to per USD) / (from per USD)
+  return new Big(fx.rates[FIAT_FOR_ASSET[to]]).div(fx.rates[FIAT_FOR_ASSET[from]]).toString();
 }
 
 /** Converts an amount in any of our assets to USD-equivalent (for limits/thresholds). */

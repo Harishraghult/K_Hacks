@@ -1,6 +1,26 @@
 # RemitRail: compliant cross-border micro-settlement on Stellar
 
-Migrant workers lose 6–8% of every remittance to correspondent-bank fees, FX markups and 1–5 day delays. RemitRail replaces that chain with a **Stellar path payment**: AED or USD goes in, INR comes out, atomically, in about 5 seconds, for **0.00001 XLM**. A mock India anchor then pays the family by UPI automatically.
+Migrant workers lose 6–8% of every remittance to correspondent-bank fees, FX markups and 1–5 day delays. RemitRail replaces that chain with a **Stellar path payment**: any of **11 currencies** goes in, any other comes out (**110 corridors**), atomically, in about 5 seconds, for **0.00001 XLM**. A mock payout anchor then credits the recipient on their local rail (UPI, ACH, SEPA Instant, Faster Payments, Zengin, Interac, NPP, PayNow, UAEFTS, GCash, SPEI).
+
+## Corridors: every currency to every currency
+
+| Currency | Country | Payout rail (mock) | Recipient details |
+|---|---|---|---|
+| USD | United States | ACH | ABA routing (checksum) + account |
+| EUR | Eurozone | SEPA Instant | euro-area IBAN (mod-97) |
+| GBP | United Kingdom | Faster Payments | sort code + 8-digit account |
+| JPY | Japan | Zengin | bank code + branch code + 7-digit account |
+| CAD | Canada | Interac e-Transfer | e-mail |
+| AUD | Australia | NPP / Osko | BSB + account |
+| SGD | Singapore | PayNow | +65 mobile |
+| AED | United Arab Emirates | UAEFTS | UAE IBAN (mod-97) |
+| INR | India | UPI or IMPS | UPI ID, or account + IFSC |
+| PHP | Philippines | GCash | PH mobile |
+| MXN | Mexico | SPEI | CLABE (checksum) |
+
+**How any pair settles:** each currency is a `t<CUR>` asset with its own issuer, and has an AMM pool against `tUSDC` (hub and spoke). Stellar path finding routes any pair X → USDC → Y in **one atomic path payment**, and also considers direct orderbooks where they exist (AED ⇄ INR). A recipient's details must match the destination's rail (e.g. a USD payout to a UPI ID is rejected with `RECIPIENT_RAIL` before the quote is used).
+
+**Adding a currency** is one row in `CURRENCY_LIST` in [shared/src/corridors.ts](shared/src/corridors.ts) (code, issuer, rail, fallback rate, pool depth), plus its issuer name in `ACCOUNT_NAMES` ([shared/src/constants.ts](shared/src/constants.ts)) and a bump of `BOOTSTRAP_VERSION`. Then `npm run bootstrap`: it creates the issuer, trustlines, float and pool. The UI, validation, FX and e2e pick it up automatically.
 
 > **Prototype on Stellar testnet.** On-chain settlement, routing, asset authorization and clawback are real. Bank deposits, KYC and UPI payouts are simulated. No real money, no mainnet.
 
@@ -54,7 +74,7 @@ Requirements: Node.js 20+ (built and tested on Node 24) and an internet connecti
 | http://localhost:3000 | **Customer app.** Sign up or log in with username and password, verify ID, add money, send to UPI or a bank account, track transfers, see receipts. |
 | http://localhost:3000/demo | **Operator / judge view.** Sender phone, routing, timeline, recipient phone, and the compliance console (admin token `demo-admin`). |
 
-Demo logins: `ravi / ravi1234`, `maria / maria1234`, `arjun / arjun1234`, `newuser / newuser1234` (not verified yet), `watchlisted / watch1234` (on a sanctions list). You can also sign up: every new account gets **its own new Stellar testnet wallet**, which stays locked on-chain until the user passes the (mock) ID check.
+Demo logins: `ravi / ravi1234` (Dubai, AED), `maria / maria1234` (Houston, USD), `arjun / arjun1234` (Abu Dhabi, AED), `priya / priya1234` (Bengaluru, INR), `emma / emma1234` (Berlin, EUR), `kenji / kenji1234` (Tokyo, JPY), `newuser / newuser1234` (not verified yet), `watchlisted / watch1234` (on a sanctions list). Sign-up offers all 11 countries. You can also sign up: every new account gets **its own new Stellar testnet wallet**, which stays locked on-chain until the user passes the (mock) ID check.
 
 Customer accounts, prototype level:
 - passwords are salted scrypt hashes
@@ -74,7 +94,7 @@ The UI picks a compact **Laptop** layout automatically on screens under 1700×90
 ```bash
 npm install
 cp .env.example .env          # set ADMIN_TOKEN; the UI and e2e default to "demo-admin"
-npm run bootstrap             # creates/funds 11 testnet accounts, assets, pools, offers (idempotent)
+npm run bootstrap             # creates/funds 22 testnet accounts (11 issuers, anchors, market maker, demo senders), assets, pools, offers (idempotent)
 npm run anchor                # mock anchor + payment watcher on :4000
 npm run web                   # UI on :3000
 ```
@@ -84,7 +104,11 @@ Other commands:
 | Command | What it does |
 |---|---|
 | `npm test` | Unit tests: amount math, quote ranking, state machine, compliance rules, error mapping, memo IDs |
-| `npm run e2e` | Integration test against the running anchor and testnet: 27 checks covering happy path, sanctions, network rejection, payout failure → refund, review → approve, 10× micro-batch, validation, stray payment |
+| `npm run e2e` | Integration test against the running anchor and testnet: happy path, sanctions, network rejection, payout failure → refund, review → approve, 10× micro-batch, validation, stray payment, plus the corridor suites below |
+| `npm run e2e -- matrix` | Quotes **all 110 corridors** on live testnet liquidity and checks each is within 3% of the FX mid |
+| `npm run e2e -- currencies` | One real transfer out of **and** into every currency (USD → EUR → GBP → … → MXN → USD), each paid out on its own rail, plus a SEPA rejection → refund |
+| `npm run e2e -- corridors` | The USD / AED / INR corridors in every direction, rail validation, sanctioned IBAN, INR → AED refund |
+| `npm run cli:transfer -- SENDER_5 tEUR 50 tJPY` | One path payment straight from the CLI, any pair (4th arg = destination asset) |
 | `npm run cli:transfer -- SENDER_1 tAED 100` | One path payment straight from the CLI, no server |
 | `npm run demo:reset` | Stop the anchor first. Wipes the anchor DB, restores the canonical on-chain auth state, re-bootstraps |
 | `npm run demo:seed` | Creates a few completed transfers so the UI isn't empty |

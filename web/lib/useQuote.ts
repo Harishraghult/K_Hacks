@@ -1,10 +1,10 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AmountError, parseAmount } from "@remit/shared/money";
-import { api, type Quote } from "./api";
+import { api, type AssetCode, type Quote } from "./api";
 
-/** Live quote for amount/asset: debounced, single-flight, auto-refreshed when the 30s hold expires. */
-export function useQuote(asset: "tAED" | "tUSDC", amount: string, opts: { paused?: boolean } = {}) {
+/** Live quote for amount/asset → destAsset: debounced, single-flight, auto-refreshed when the 30s hold expires. */
+export function useQuote(asset: AssetCode, amount: string, destAsset: AssetCode = "tINR", opts: { paused?: boolean } = {}) {
   const [quote, setQuote] = useState<Quote>();
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(false);
@@ -19,14 +19,14 @@ export function useQuote(asset: "tAED" | "tUSDC", amount: string, opts: { paused
   }
 
   const refresh = useCallback(async () => {
-    if (amountError) {
+    if (amountError || asset === destAsset) {
       setQuote(undefined);
       return undefined;
     }
     const id = ++seq.current;
     setLoading(true);
     try {
-      const q = await api<Quote>(`/quote?sendAsset=${asset}&sendAmount=${encodeURIComponent(amount)}&destAsset=tINR`);
+      const q = await api<Quote>(`/quote?sendAsset=${asset}&sendAmount=${encodeURIComponent(amount)}&destAsset=${destAsset}`);
       if (id !== seq.current) return undefined;
       setQuote(q);
       setError(undefined);
@@ -39,7 +39,7 @@ export function useQuote(asset: "tAED" | "tUSDC", amount: string, opts: { paused
     } finally {
       if (id === seq.current) setLoading(false);
     }
-  }, [asset, amount, amountError]);
+  }, [asset, amount, destAsset, amountError]);
 
   useEffect(() => {
     const t = setTimeout(refresh, 350);

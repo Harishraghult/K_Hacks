@@ -1,6 +1,7 @@
 "use client";
 import type { ReactNode } from "react";
-import type { TransferStatus } from "@remit/shared";
+import type { TransferStatus } from "@remit/shared/transfer";
+import { CURRENCY_LIST } from "@remit/shared/corridors";
 import { useView } from "@/lib/view";
 
 export function Phone({ title, subtitle, children, footer }: { title: string; subtitle?: string; children: ReactNode; footer?: ReactNode }) {
@@ -52,7 +53,7 @@ export const STATUS_META: Record<TransferStatus, { label: string; tone: Tone; se
   APPROVED: { label: "Approved", tone: "blue", senderText: "Approved, sending…" },
   SUBMITTED: { label: "Submitted to Stellar", tone: "blue", senderText: "Sending…" },
   ON_CHAIN_FAILED: { label: "Rejected on-chain", tone: "red", senderText: "Transfer failed — nothing was charged" },
-  SETTLED_ON_CHAIN: { label: "Settled on-chain", tone: "green", senderText: "Delivered to India partner" },
+  SETTLED_ON_CHAIN: { label: "Settled on-chain", tone: "green", senderText: "Delivered to payout partner" },
   PAYOUT_PENDING: { label: "Payout pending", tone: "blue", senderText: "Crediting recipient's account…" },
   PAYOUT_COMPLETE: { label: "Paid out", tone: "green", senderText: "Delivered" },
   PAYOUT_FAILED: { label: "Payout failed", tone: "red", senderText: "Recipient bank rejected the credit" },
@@ -61,8 +62,8 @@ export const STATUS_META: Record<TransferStatus, { label: string; tone: Tone; se
   REFUND_FAILED: { label: "Refund failed", tone: "red", senderText: "Refund needs manual action — support notified" },
 };
 
-export const FIAT_LABEL: Record<string, string> = { tUSDC: "USD", tAED: "AED", tINR: "INR" };
-export const FIAT_SYMBOL: Record<string, string> = { tUSDC: "$", tAED: "AED ", tINR: "₹" };
+export const FIAT_LABEL: Record<string, string> = Object.fromEntries(CURRENCY_LIST.map((c) => [c.asset, c.fiat]));
+export const FIAT_SYMBOL: Record<string, string> = Object.fromEntries(CURRENCY_LIST.map((c) => [c.asset, c.symbol]));
 
 export function Spinner() {
   return <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent align-[-2px]" />;

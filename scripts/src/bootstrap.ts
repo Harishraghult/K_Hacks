@@ -9,7 +9,10 @@
  *     the market maker's are not, because clawback-enabled trustlines cannot deposit into AMM pools)
  *  5. other trustlines, authorized for KYC-passed accounts only (UNVERIFIED_1 never authorized)
  *  6. mint supply, seed demo balances
- *  7. AMM pools + a worse-priced direct orderbook, priced from live FX
+ *  7. AMM pools + worse-priced direct orderbook offers (both directions), priced from live FX
+ *
+ * All 6 corridors (AED/USD/INR → any other) share this liquidity. Every sender and the receiving
+ * anchor hold all three assets, so any currency can be sent and any currency can be paid out.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -24,10 +27,14 @@ import {
 } from "@stellar/stellar-sdk";
 import {
   ACCOUNT_NAMES,
+  ALL_ASSETS,
+  BOOTSTRAP_VERSION,
   Big,
+  CURRENCY_LIST,
   EXPLORER_BASE,
   FRIENDBOT_URL,
   assetOf,
+  changeTrustOp,
   dataDir,
   getFx,
   keypair,
@@ -56,22 +63,37 @@ type AssetBalance = Horizon.HorizonApi.BalanceLineAsset;
 
 /** Which assets each holder needs, and whether it is KYC-authorised. */
 const HOLDERS: { name: AccountName; assets: AssetCode[]; authorize: boolean }[] = [
-  { name: "ANCHOR_SEND", assets: ["tUSDC", "tAED"], authorize: true },
-  { name: "ANCHOR_RECV", assets: ["tINR"], authorize: true },
-  { name: "SENDER_1", assets: ["tUSDC", "tAED"], authorize: true },
-  { name: "SENDER_2", assets: ["tUSDC", "tAED"], authorize: true },
-  { name: "SENDER_3", assets: ["tUSDC", "tAED"], authorize: true },
+  // On-ramp float: pays out the digital currency when a customer adds money (any of the 3 currencies).
+  { name: "ANCHOR_SEND", assets: ALL_ASSETS, authorize: true },
+  // Off-ramp: receives the destination currency of every corridor, then pays out locally (UPI / ACH / UAEFTS).
+  { name: "ANCHOR_RECV", assets: ALL_ASSETS, authorize: true },
+  { name: "SENDER_1", assets: ALL_ASSETS, authorize: true },
+  { name: "SENDER_2", assets: ALL_ASSETS, authorize: true },
+  { name: "SENDER_3", assets: ALL_ASSETS, authorize: true },
+  { name: "SENDER_4", assets: ALL_ASSETS, authorize: true },
+  { name: "SENDER_5", assets: ALL_ASSETS, authorize: true },
+  { name: "SENDER_6", assets: ALL_ASSETS, authorize: true },
   // Passed KYC at onboarding; later found on the sanctions list. Backend blocks it; admin can freeze on-chain.
-  { name: "SANCTIONED_1", assets: ["tUSDC", "tAED"], authorize: true },
+  { name: "SANCTIONED_1", assets: ALL_ASSETS, authorize: true },
   // Never passed KYC: trustline exists but is never authorized, so the network itself rejects its payments.
-  { name: "UNVERIFIED_1", assets: ["tUSDC", "tAED"], authorize: false },
+  { name: "UNVERIFIED_1", assets: ALL_ASSETS, authorize: false },
 ];
-const MM_ASSETS: AssetCode[] = ["tUSDC", "tINR", "tAED"];
-const ISSUERS: { name: AccountName; code: AssetCode }[] = [
-  { name: "ISSUER_USD", code: "tUSDC" },
-  { name: "ISSUER_INR", code: "tINR" },
-  { name: "ISSUER_AED", code: "tAED" },
+
+/** Starter wallet balances (only refilled when below `min`). */
+const STARTERS: { name: AccountName; code: AssetCode; target: string; min: string }[] = [
+  ...(["SENDER_1", "SENDER_2", "SENDER_3", "SANCTIONED_1"] as AccountName[]).flatMap((name) => [
+    { name, code: "tAED" as AssetCode, target: "1000", min: "500" },
+    { name, code: "tUSDC" as AssetCode, target: "300", min: "150" },
+  ]),
+  // Priya, Bengaluru: sends INR abroad (India → UAE / US corridors).
+  { name: "SENDER_4", code: "tINR", target: "50000", min: "25000" },
+  { name: "SENDER_4", code: "tUSDC", target: "100", min: "50" },
+  // Emma, Berlin (EUR) and Kenji, Tokyo (JPY).
+  { name: "SENDER_5", code: "tEUR", target: "1000", min: "500" },
+  { name: "SENDER_6", code: "tJPY", target: "150000", min: "75000" },
 ];
+const MM_ASSETS: AssetCode[] = ALL_ASSETS;
+const ISSUERS: { name: AccountName; code: AssetCode }[] = CURRENCY_LIST.map((c) => ({ name: c.issuer as AccountName, code: c.asset }));
 
 // ---------- helpers ----------
 
@@ -104,7 +126,7 @@ async function balancesOf(n: AccountName): Promise<Balance[]> {
 
 async function ensureTrustlines(holder: AccountName, codes: AssetCode[]) {
   const bals = await balancesOf(holder);
-  const ops = codes.filter((c) => !findLine(bals, A(c))).map((c) => Operation.changeTrust({ asset: A(c) }));
+  const ops = codes.filter((c) => !findLine(bals, A(c))).map((c) => changeTrustOp(A(c)));
   if (ops.length) {
     await submitOps(keypair(book, holder), ops);
     log(`${holder}: trustlines ${codes.filter((c) => !findLine(bals, A(c))).join(", ")}`);
@@ -157,25 +179,22 @@ async function topUp(from: AccountName, to: AccountName, code: AssetCode, target
   log(`${from} → ${to}: ${amount} ${code}`);
 }
 
-/** Direct tAED→tINR orderbook: MM sells tINR for tAED at a deliberately worse rate. */
-async function ensureDirectOffer(inrPerAed: Big, amountInr: string) {
-  const worse = inrPerAed.times("0.985"); // 1.5% worse than mid
-  const priceAedPerInr = new Big(1).div(worse).toPrecision(9); // price = buying (tAED) per selling (tINR)
+/**
+ * Direct orderbook route `pay → get`: the MM sells `get` for `pay` at a deliberately worse rate (1.5% below
+ * mid), so the router has a real alternative to compare against the AMM route.
+ * `getPerPay` = mid-market units of `get` per 1 unit of `pay`.
+ */
+async function ensureDirectOffer(pay: AssetCode, get: AssetCode, getPerPay: Big, amountGet: string) {
+  const worse = getPerPay.times("0.985");
+  const price = new Big(1).div(worse).toPrecision(9); // price = buying (pay) per selling (get)
   const offers = await server.offers().forAccount(pub("MARKET_MAKER")).limit(50).call();
   const existing = offers.records.find(
-    (o) =>
-      (o.selling as { asset_code?: string }).asset_code === "tINR" && (o.buying as { asset_code?: string }).asset_code === "tAED",
+    (o) => (o.selling as { asset_code?: string }).asset_code === get && (o.buying as { asset_code?: string }).asset_code === pay,
   );
   await submitOps(keypair(book, "MARKET_MAKER"), [
-    Operation.manageSellOffer({
-      selling: A("tINR"),
-      buying: A("tAED"),
-      amount: amountInr,
-      price: priceAedPerInr,
-      offerId: existing ? existing.id : "0",
-    }),
+    Operation.manageSellOffer({ selling: A(get), buying: A(pay), amount: amountGet, price, offerId: existing ? existing.id : "0" }),
   ]);
-  log(`orderbook tAED→tINR: ${existing ? "refreshed" : "created"} offer, ${worse.toFixed(4)} INR/AED (1.5% worse than mid)`);
+  log(`orderbook ${pay}→${get}: ${existing ? "refreshed" : "created"} offer, ${worse.toFixed(6)} ${get}/${pay} (1.5% worse than mid)`);
 }
 
 // ---------- main ----------
@@ -202,7 +221,7 @@ async function main() {
     const { lp, id } = poolInfo(book, x, y);
     const bals = await balancesOf("MARKET_MAKER");
     if (!bals.some((bl) => (bl as { liquidity_pool_id?: string }).liquidity_pool_id === id)) {
-      await submitOps(keypair(book, "MARKET_MAKER"), [Operation.changeTrust({ asset: lp })]);
+      await submitOps(keypair(book, "MARKET_MAKER"), [changeTrustOp(lp)]);
       log(`MARKET_MAKER: pool-share trustline ${x}/${y}`);
     }
   }
@@ -228,17 +247,20 @@ async function main() {
     }
   }
 
-  // 6. Mint
-  await topUp("ISSUER_USD", "MARKET_MAKER", "tUSDC", "2000000", "1000000");
-  await topUp("ISSUER_AED", "MARKET_MAKER", "tAED", "6000000", "3000000");
-  await topUp("ISSUER_INR", "MARKET_MAKER", "tINR", "200000000", "100000000");
-  await topUp("ISSUER_USD", "ANCHOR_SEND", "tUSDC", "1000000", "100000");
-  await topUp("ISSUER_AED", "ANCHOR_SEND", "tAED", "3000000", "300000");
-  // Starter balances for demo senders (only refilled when nearly empty)
-  for (const s of ["SENDER_1", "SENDER_2", "SENDER_3", "SANCTIONED_1"] as AccountName[]) {
-    await topUp("ANCHOR_SEND", s, "tAED", "1000", "500");
-    await topUp("ANCHOR_SEND", s, "tUSDC", "300", "150");
+  // 6. Mint, sized from the registry: market maker holds ~2.5× its pool depth (+ orderbook), the on-ramp
+  //    float holds ~USD 1M of every currency. Uses the fallback rate; precision does not matter here.
+  const totalPoolUsd = CURRENCY_LIST.reduce((a, c) => a.plus(c.poolDepthUsd), new Big(0));
+  await topUp("ISSUER_USD", "MARKET_MAKER", "tUSDC", toStellar(totalPoolUsd.times(2)), toStellar(totalPoolUsd.times("1.3")));
+  for (const c of CURRENCY_LIST.filter((x) => x.asset !== "tUSDC")) {
+    const depth = new Big(c.poolDepthUsd).times(c.fallbackPerUsd);
+    await topUp(c.issuer as AccountName, "MARKET_MAKER", c.asset, toStellar(depth.times("2.5")), toStellar(depth.times("1.5")));
   }
+  for (const c of CURRENCY_LIST) {
+    const float = new Big(1_000_000).times(c.fallbackPerUsd);
+    await topUp(c.issuer as AccountName, "ANCHOR_SEND", c.asset, toStellar(float), toStellar(float.div(10)));
+  }
+  // Starter balances for demo senders (only refilled when nearly empty)
+  for (const s of STARTERS) await topUp("ANCHOR_SEND", s.name, s.code, s.target, s.min);
 
   // 7. Liquidity priced from live FX
   const fx = await getFx();
@@ -247,11 +269,12 @@ async function main() {
   log(`FX: 1 USD = ${fx.inrPerUsd} INR (${fx.source}, as of ${fx.asOf}); 1 USD = ${fx.aedPerUsd} AED; 1 AED = ${inrPerAed.toFixed(4)} INR`);
   // Seeds empty pools at the FX mid; re-centres pools that demo traffic has pushed off the mid.
   for (const line of await rebalanceAll(book, fx)) log(`pool ${line}`);
-  const usdInrPool = poolInfo(book, "tUSDC", "tINR").id;
-  const aedUsdPool = poolInfo(book, "tUSDC", "tAED").id;
-  await ensureDirectOffer(inrPerAed, "5000000");
+  const pools = Object.fromEntries(POOLS.map((p) => [`${p.x}/${p.y}`, poolInfo(book, p.x, p.y).id]));
+  // Direct (non-AMM) routes in both directions of the AED/INR corridor.
+  await ensureDirectOffer("tAED", "tINR", inrPerAed, "5000000");
+  await ensureDirectOffer("tINR", "tAED", new Big(1).div(inrPerAed), "200000");
 
-  const state = { bootstrappedAt: new Date().toISOString(), fx, pools: { "tUSDC/tINR": usdInrPool, "tAED/tUSDC": aedUsdPool } };
+  const state = { bootstrapVersion: BOOTSTRAP_VERSION, bootstrappedAt: new Date().toISOString(), fx, pools };
   fs.writeFileSync(path.join(dataDir(), "network.json"), JSON.stringify(state, null, 2));
 
   // 8. Summary
@@ -270,7 +293,9 @@ async function main() {
     console.log(`${n.padEnd(14)} ${acc.accountId()}   ${bals}`);
   }
   console.log(`\nExplorer: ${EXPLORER_BASE}/account/<public key>`);
-  console.log(`Pools: ${EXPLORER_BASE}/liquidity-pool/${usdInrPool}  ${EXPLORER_BASE}/liquidity-pool/${aedUsdPool}`);
+  console.log(`Pools (${Object.keys(pools).length}, every currency against tUSDC):`);
+  for (const [pair, id] of Object.entries(pools)) console.log(`  ${pair.padEnd(12)} ${EXPLORER_BASE}/liquidity-pool/${id}`);
+  console.log(`Corridors: ${CURRENCY_LIST.length} currencies → ${CURRENCY_LIST.length * (CURRENCY_LIST.length - 1)} routes`);
   console.log("\nBootstrap complete.\n");
 }
 

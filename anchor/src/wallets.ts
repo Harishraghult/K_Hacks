@@ -11,7 +11,12 @@ import path from "node:path";
 import { Keypair, Operation } from "@stellar/stellar-sdk";
 import {
   ACCOUNT_NAMES,
+  ALL_ASSETS,
+  ASSET_OF_COUNTRY,
+  CURRENCY,
   FRIENDBOT_URL,
+  type Country,
+  type Fiat,
   assetOf,
   dataDir,
   keypair,
@@ -53,7 +58,7 @@ export interface UserRow {
   sender_id: string;
   wallet_pub: string;
   wallet_secret_enc: string | null;
-  country: "AE" | "US";
+  country: Country;
   wallet_status: WalletStatus;
   wallet_error: string | null;
   created_at: number;
@@ -112,7 +117,7 @@ export const senderExists = (senderId: string) => isPersona(senderId) || !!userB
 
 const provisioning = new Set<string>();
 
-/** Idempotent: fund via Friendbot, then add tAED + tUSDC trustlines (left unauthorised until KYC passes). */
+/** Idempotent: fund via Friendbot, then add tAED + tUSDC + tINR trustlines (left unauthorised until KYC passes). */
 export async function provisionWallet(book: AccountBook, username: string): Promise<void> {
   if (provisioning.has(username)) return;
   provisioning.add(username);
@@ -128,7 +133,7 @@ export async function provisionWallet(book: AccountBook, username: string): Prom
     }
     if (!acc) throw new Error("Could not create the wallet on Stellar testnet (Friendbot unavailable). Retry later.");
     const have = new Set(acc.balances.map((b) => ("asset_code" in b ? b.asset_code : "native")));
-    const ops = (["tAED", "tUSDC"] as const).filter((c) => !have.has(c)).map((c) => Operation.changeTrust({ asset: assetOf(book, c) }));
+    const ops = ALL_ASSETS.filter((c) => !have.has(c)).map((c) => Operation.changeTrust({ asset: assetOf(book, c) }));
     if (ops.length) await submitOps(kp, ops);
     db.prepare("UPDATE users SET wallet_status = 'READY', wallet_error = NULL WHERE username = ?").run(username);
   } catch (e) {
@@ -139,26 +144,47 @@ export async function provisionWallet(book: AccountBook, username: string): Prom
   }
 }
 
-export function createUser(i: { username: string; displayName: string; passwordHash: string; country: "AE" | "US" }): UserRow {
+/** Customer bank account currency and opening balance, by country. */
+export function bankForCountry(country: Country): { currency: Fiat; start: string } {
+  const c = CURRENCY[ASSET_OF_COUNTRY[country]];
+  return { currency: c.fiat, start: c.bankStart };
+}
+
+/**
+ * Wallets created before INR could be sent lack a tINR trustline. Adds any missing trustline and returns
+ * the assets that were added (the caller authorises them if the customer has passed KYC).
+ */
+export async function addMissingTrustlines(book: AccountBook, username: string) {
+  const u = userByUsername(username);
+  if (!u?.wallet_secret_enc || u.wallet_status !== "READY") return [];
+  const acc = await loadAccountOrNull(u.wallet_pub);
+  if (!acc) return [];
+  const have = new Set(acc.balances.map((b) => ("asset_code" in b ? b.asset_code : "native")));
+  const missing = ALL_ASSETS.filter((c) => !have.has(c));
+  if (missing.length) await submitOps(Keypair.fromSecret(decrypt(u.wallet_secret_enc)), missing.map((c) => Operation.changeTrust({ asset: assetOf(book, c) })));
+  return missing;
+}
+
+export function createUser(i: { username: string; displayName: string; passwordHash: string; country: Country }): UserRow {
   const kp = Keypair.random();
   db.prepare(
     `INSERT INTO users (username, display_name, password_hash, sender_id, wallet_pub, wallet_secret_enc, country, wallet_status, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, 'PROVISIONING', ?)`,
   ).run(i.username, i.displayName, i.passwordHash, `U-${i.username}`, kp.publicKey(), encrypt(kp.secret()), i.country, Date.now());
   // Linked mock bank account so the new customer can add money once verified.
-  db.prepare("INSERT OR IGNORE INTO bank (account_id, currency, balance) VALUES (?, ?, ?)").run(
-    `U-${i.username}`,
-    i.country === "US" ? "USD" : "AED",
-    i.country === "US" ? "2000" : "7500",
-  );
+  const bank = bankForCountry(i.country);
+  db.prepare("INSERT OR IGNORE INTO bank (account_id, currency, balance) VALUES (?, ?, ?)").run(`U-${i.username}`, bank.currency, bank.start);
   return userByUsername(i.username)!;
 }
 
 /** Demo logins mapped onto the pre-built persona wallets. */
-export const DEMO_LOGINS: { username: string; password: string; senderId: AccountName; country: "AE" | "US" }[] = [
+export const DEMO_LOGINS: { username: string; password: string; senderId: AccountName; country: Country }[] = [
   { username: "ravi", password: "ravi1234", senderId: "SENDER_1", country: "AE" },
   { username: "maria", password: "maria1234", senderId: "SENDER_2", country: "US" },
   { username: "arjun", password: "arjun1234", senderId: "SENDER_3", country: "AE" },
+  { username: "priya", password: "priya1234", senderId: "SENDER_4", country: "IN" },
+  { username: "emma", password: "emma1234", senderId: "SENDER_5", country: "EU" },
+  { username: "kenji", password: "kenji1234", senderId: "SENDER_6", country: "JP" },
   { username: "watchlisted", password: "watch1234", senderId: "SANCTIONED_1", country: "AE" },
   { username: "newuser", password: "newuser1234", senderId: "UNVERIFIED_1", country: "AE" },
 ];

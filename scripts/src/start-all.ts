@@ -10,7 +10,7 @@ import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { accountsFile, loadAccountOrNull, repoRoot } from "@remit/shared";
+import { ACCOUNT_NAMES, BOOTSTRAP_VERSION, accountsFile, dataDir, loadAccountOrNull, repoRoot } from "@remit/shared";
 
 const root = repoRoot();
 const ANCHOR_PORT = 4000;
@@ -96,8 +96,15 @@ step("Checking Stellar testnet…");
 let needBootstrap = !fs.existsSync(accountsFile());
 if (!needBootstrap) {
   const acc = JSON.parse(fs.readFileSync(accountsFile(), "utf8"));
+  const netFile = path.join(dataDir(), "network.json");
+  const version = fs.existsSync(netFile) ? Number(JSON.parse(fs.readFileSync(netFile, "utf8")).bootstrapVersion ?? 1) : 0;
+  // Older setup (e.g. before all 6 corridors existed) or a new demo account: re-run the idempotent bootstrap.
+  if (version < BOOTSTRAP_VERSION || ACCOUNT_NAMES.some((n) => !acc[n])) {
+    console.log(`  testnet setup is v${version}, this code needs v${BOOTSTRAP_VERSION}: upgrading`);
+    needBootstrap = true;
+  }
   try {
-    needBootstrap = !(await loadAccountOrNull(acc.ANCHOR_RECV.publicKey)) || !(await loadAccountOrNull(acc.ISSUER_INR.publicKey));
+    needBootstrap ||= !(await loadAccountOrNull(acc.ANCHOR_RECV.publicKey)) || !(await loadAccountOrNull(acc.ISSUER_INR.publicKey));
   } catch {
     console.error("  Cannot reach Stellar testnet (horizon-testnet.stellar.org). Check your internet connection.");
     process.exit(1);

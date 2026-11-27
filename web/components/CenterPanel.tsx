@@ -2,13 +2,17 @@
 import { useState } from "react";
 import { Big, fmt, stroopsToXlm } from "@remit/shared/money";
 import { TERMINAL, type TransferStatus } from "@remit/shared/transfer";
-import { api, type AppConfig, type Health, type Quote, type TransferView } from "@/lib/api";
+import { CURRENCY } from "@remit/shared/corridors";
+import { api, type AppConfig, type AssetCode, type Health, type Quote, type Recipient, type TransferView } from "@/lib/api";
 import { relTime } from "@/lib/useLive";
 import { useView } from "@/lib/view";
 import { Badge, FIAT_LABEL, STATUS_META, Spinner, short } from "./ui";
 
 const HAPPY: TransferStatus[] = ["CREATED", "COMPLIANCE_CHECK", "APPROVED", "SUBMITTED", "SETTLED_ON_CHAIN", "PAYOUT_PENDING", "PAYOUT_COMPLETE"];
-const HOP_LABEL: Record<string, string> = { tAED: "AED token", tUSDC: "USDC token", tINR: "INR token", XLM: "XLM" };
+const HOP_LABEL: Record<string, string> = { ...Object.fromEntries(Object.entries(FIAT_LABEL).map(([a, f]) => [a, `${f} token`])), tUSDC: "USDC token", XLM: "XLM" };
+
+const usdPer = (a: string, fx: { rates: Record<string, string> }) => new Big(1).div(fx.rates[FIAT_LABEL[a]] ?? "1");
+const sym = (a: string) => CURRENCY[a as AssetCode]?.symbol ?? "";
 
 function Route({ hops, amount, best }: { hops: string[]; amount?: string; best: boolean }) {
   const { compact } = useView();
@@ -30,7 +34,8 @@ function Route({ hops, amount, best }: { hops: string[]; amount?: string; best: 
       ))}
       {amount && (
         <div className={`ml-auto text-right font-mono text-sm tabular-nums ${best ? "font-semibold text-emerald-300" : "text-zinc-400 line-through decoration-zinc-500"}`}>
-          ₹{fmt(amount)}
+          {sym(hops[hops.length - 1])}
+          {fmt(amount)}
           <div className="text-[9px] font-sans font-medium uppercase tracking-wider no-underline">{best ? "chosen" : "rejected"}</div>
         </div>
       )}
@@ -58,7 +63,7 @@ interface Props {
   config?: AppConfig;
   health?: Health;
   onSelect: (id: string) => void;
-  micro: { senderId: string; recipient: { name: string; upiId: string } };
+  micro: { senderId: string; dest: AssetCode; recipient: Recipient };
   batchIds: string[];
   onBatch: (ids: string[]) => void;
   allTransfers: Record<string, TransferView>;
@@ -79,10 +84,9 @@ export function CenterPanel({ quote, transfer, transfers, config, health, onSele
   // Comparison numbers
   const fx = health?.fx;
   const t = transfer;
-  let cmp: undefined | { send: string; asset: string; mid: Big; tradRecv: Big; tradFee: Big; engRecv: Big; engFeeXlm: string; engFeeUsd: string; secs?: number; final: boolean; costPct: Big };
+  let cmp: undefined | { send: string; asset: string; dsym: string; mid: Big; tradRecv: Big; tradFee: Big; engRecv: Big; engFeeXlm: string; engFeeUsd: string; secs?: number; final: boolean; costPct: Big };
   if (t && fx && config) {
-    const usdPer = t.sendAsset === "tUSDC" ? new Big(1) : new Big(1).div(fx.aedPerUsd);
-    const mid = usdPer.times(fx.inrPerUsd);
+    const mid = usdPer(t.sendAsset, fx).div(usdPer(t.destAsset, fx));
     const ideal = new Big(t.sendAmount).times(mid);
     const feePct = new Big(config.traditional.FEE_PCT).div(100);
     const engRecv = new Big(t.receivedAmount ?? t.quotedDest);
@@ -92,6 +96,7 @@ export function CenterPanel({ quote, transfer, transfers, config, health, onSele
     cmp = {
       send: t.sendAmount,
       asset: FIAT_LABEL[t.sendAsset],
+      dsym: sym(t.destAsset),
       mid,
       tradRecv: ideal.times(new Big(1).minus(feePct)),
       tradFee: new Big(t.usdEquiv).times(feePct),
@@ -114,12 +119,17 @@ export function CenterPanel({ quote, transfer, transfers, config, health, onSele
   const batchPaid = batch.filter((b) => b.status === "PAYOUT_COMPLETE");
   const batchFee = batch.reduce((a, b) => a.plus(b.feeStroops ?? 0), new Big(0));
 
+  // 10 × ≈$5 in the sender's selected currency (USD, or AED when paying out in USD, if no quote yet).
+  const microAsset: AssetCode = quote && quote.sendAsset !== micro.dest ? quote.sendAsset : micro.dest === "tUSDC" ? "tAED" : "tUSDC";
+  const microDp = CURRENCY[microAsset].dp;
+  const microEach = new Big(5).times(health?.fx.rates?.[CURRENCY[microAsset].fiat] ?? "1").toFixed(microDp === 0 ? 0 : 2);
+  const microSend = { asset: microAsset, each: microEach, label: `${CURRENCY[microAsset].symbol}${fmt(microEach, microDp)}` };
   async function runMicro() {
     setMicroBusy(true);
     setMicroErr(undefined);
     try {
       const r = await api<{ transferIds: string[] }>("/transfer/batch", {
-        body: { senderId: micro.senderId, sendAsset: "tUSDC", amountEach: "5", count: 10, recipient: micro.recipient },
+        body: { senderId: micro.senderId, sendAsset: microSend.asset, destAsset: micro.dest, amountEach: microSend.each, count: 10, recipient: micro.recipient },
       });
       onBatch(r.transferIds);
     } catch (e) {
@@ -152,7 +162,7 @@ export function CenterPanel({ quote, transfer, transfers, config, health, onSele
         <Card title="Traditional wire (illustrative)">
           {cmp && config ? (
             <div className="space-y-2">
-              <div className={`font-bold tabular-nums text-zinc-300 ${compact ? "text-2xl" : "text-3xl"}`}>₹{fmt(cmp.tradRecv)}</div>
+              <div className={`font-bold tabular-nums text-zinc-300 ${compact ? "text-2xl" : "text-3xl"}`}>{cmp.dsym}{fmt(cmp.tradRecv)}</div>
               <dl className="space-y-1 text-xs text-zinc-400">
                 <div className="flex justify-between"><dt>Fees + FX markup</dt><dd className="tabular-nums">{config.traditional.FEE_PCT}% ≈ ${fmt(cmp.tradFee)}</dd></div>
                 <div className="flex justify-between"><dt>Arrives in</dt><dd>{config.traditional.SETTLEMENT}</dd></div>
@@ -169,14 +179,14 @@ export function CenterPanel({ quote, transfer, transfers, config, health, onSele
         <Card title="This engine (actual, on-chain)" right={cmp && !cmp.final && <Badge tone="blue">quoted</Badge>}>
           {cmp ? (
             <div className="space-y-2">
-              <div className={`font-bold tabular-nums text-emerald-300 ${compact ? "text-2xl" : "text-3xl"}`}>₹{fmt(cmp.engRecv)}</div>
+              <div className={`font-bold tabular-nums text-emerald-300 ${compact ? "text-2xl" : "text-3xl"}`}>{cmp.dsym}{fmt(cmp.engRecv)}</div>
               <dl className="space-y-1 text-xs text-zinc-400">
                 <div className="flex justify-between"><dt>Network fee</dt><dd className="tabular-nums">{cmp.engFeeXlm} XLM ≈ ${cmp.engFeeUsd}</dd></div>
                 <div className="flex justify-between"><dt>Pool fees + spread vs mid</dt><dd className="tabular-nums">{fmt(cmp.costPct, 2)}%</dd></div>
                 <div className="flex justify-between"><dt>Sent → paid out</dt><dd className="tabular-nums">{cmp.secs !== undefined ? `${cmp.secs.toFixed(1)} s` : "…"}</dd></div>
               </dl>
               <div className="rounded-lg bg-emerald-500/10 px-2 py-1.5 text-xs font-semibold text-emerald-300">
-                Family receives ₹{fmt(cmp.engRecv.minus(cmp.tradRecv))} more
+                Recipient gets {cmp.dsym}{fmt(cmp.engRecv.minus(cmp.tradRecv))} more
               </div>
               <div className="text-[10px] text-zinc-500">Fee in USD uses a reference XLM price of ${config?.xlmUsdReference}; testnet XLM has no market price.</div>
             </div>
@@ -222,10 +232,10 @@ export function CenterPanel({ quote, transfer, transfers, config, health, onSele
         )}
       </Card>
 
-      <Card title="Micro-remittance: 10 × $5" right={<span className="text-[11px] text-zinc-500">one ledger, ten separate payouts</span>}>
+      <Card title={`Micro-remittance: 10 × ${microSend.label} → ${FIAT_LABEL[micro.dest]}`} right={<span className="text-[11px] text-zinc-500">one ledger, ten separate payouts</span>}>
         <div className="flex flex-wrap items-center gap-3">
           <button type="button" onClick={runMicro} disabled={microBusy} className="rounded-xl bg-sky-500 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-600 disabled:opacity-50">
-            {microBusy ? <Spinner /> : "Send 10 × $5"}
+            {microBusy ? <Spinner /> : `Send 10 × ${microSend.label}`}
           </button>
           {batch.length > 0 && config && (
             <div className="text-xs text-zinc-300">
@@ -251,7 +261,7 @@ export function CenterPanel({ quote, transfer, transfers, config, health, onSele
             <button key={x.id} type="button" onClick={() => onSelect(x.id)} className={`flex w-full items-center justify-between gap-2 py-1.5 text-left text-xs hover:bg-white/5 ${x.id === t?.id ? "bg-white/5" : ""}`}>
               <span className="font-mono text-zinc-500">{x.id}</span>
               <span className="truncate text-zinc-300">
-                {x.senderName.split(" ")[0]} → {x.recipient.name.split(" ")[0]} · {FIAT_LABEL[x.sendAsset]} {fmt(x.sendAmount)}
+                {x.senderName.split(" ")[0]} → {x.recipient.name.split(" ")[0]} · {FIAT_LABEL[x.sendAsset]} {fmt(x.sendAmount)} → {FIAT_LABEL[x.destAsset]}
               </span>
               <span className="ml-auto flex items-center gap-2">
                 <span className="text-zinc-600">{relTime(x.createdAt)}</span>

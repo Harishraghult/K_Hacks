@@ -6,48 +6,53 @@ export const SOROBAN_RPC_URL = process.env.SOROBAN_RPC_URL ?? "https://soroban-t
 export const NETWORK_PASSPHRASE = Networks.TESTNET;
 export const EXPLORER_BASE = "https://stellar.expert/explorer/testnet";
 
-/** Asset codes (<=12 chars, alphanumeric). */
-export const ASSET_CODES = { USD: "tUSDC", INR: "tINR", AED: "tAED" } as const;
-export type AssetCode = (typeof ASSET_CODES)[keyof typeof ASSET_CODES];
-export const SEND_ASSETS: AssetCode[] = ["tUSDC", "tAED"];
+import { ALL_ASSETS, CURRENCY, CURRENCY_LIST, type AssetCode, type Fiat } from "./corridors";
+
+/** Asset codes (<=12 chars, alphanumeric). The currency registry lives in corridors.ts. */
+export { ASSET_CODES, type AssetCode } from "./corridors";
+/** Every asset can be sent and received: n currencies → n·(n−1) corridors (see corridors.ts). */
+export const SEND_ASSETS: AssetCode[] = ALL_ASSETS;
+
+/** Bump when bootstrap must re-run on existing testnet accounts (new trustlines, accounts, offers). */
+export const BOOTSTRAP_VERSION = 3;
 
 export const ACCOUNT_NAMES = [
   "ISSUER_USD",
   "ISSUER_INR",
   "ISSUER_AED",
+  "ISSUER_EUR",
+  "ISSUER_GBP",
+  "ISSUER_JPY",
+  "ISSUER_CAD",
+  "ISSUER_AUD",
+  "ISSUER_SGD",
+  "ISSUER_PHP",
+  "ISSUER_MXN",
   "ANCHOR_SEND",
   "ANCHOR_RECV",
   "MARKET_MAKER",
   "SENDER_1",
   "SENDER_2",
   "SENDER_3",
+  "SENDER_4",
+  "SENDER_5",
+  "SENDER_6",
   "SANCTIONED_1",
   "UNVERIFIED_1",
 ] as const;
 export type AccountName = (typeof ACCOUNT_NAMES)[number];
 
 /** Which issuer account issues which asset. */
-export const ISSUER_FOR: Record<AssetCode, AccountName> = {
-  tUSDC: "ISSUER_USD",
-  tINR: "ISSUER_INR",
-  tAED: "ISSUER_AED",
-};
+export const ISSUER_FOR = Object.fromEntries(CURRENCY_LIST.map((c) => [c.asset, c.issuer])) as Record<AssetCode, AccountName>;
+export const ISSUER_NAMES = CURRENCY_LIST.map((c) => c.issuer as AccountName);
 
-export const FIAT_FOR_ASSET: Record<AssetCode, "USD" | "INR" | "AED"> = {
-  tUSDC: "USD",
-  tINR: "INR",
-  tAED: "AED",
-};
-export const ASSET_FOR_FIAT: Record<"USD" | "AED" | "INR", AssetCode> = {
-  USD: "tUSDC",
-  AED: "tAED",
-  INR: "tINR",
-};
+export const FIAT_FOR_ASSET = Object.fromEntries(CURRENCY_LIST.map((c) => [c.asset, c.fiat])) as Record<AssetCode, Fiat>;
+export const ASSET_FOR_FIAT = Object.fromEntries(CURRENCY_LIST.map((c) => [c.fiat, c.asset])) as Record<Fiat, AssetCode>;
 
 /** AED is pegged to USD. */
-export const AED_PER_USD = "3.6725";
+export const AED_PER_USD = CURRENCY.tAED.fallbackPerUsd;
 /** Used only if the FX API is unreachable. */
-export const FALLBACK_INR_PER_USD = "92.90";
+export const FALLBACK_INR_PER_USD = CURRENCY.tINR.fallbackPerUsd;
 
 export const COMPLIANCE = {
   /** USD-equivalent above which a transfer needs manual review. */

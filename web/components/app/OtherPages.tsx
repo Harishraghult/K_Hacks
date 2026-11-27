@@ -5,7 +5,10 @@ import { useEffect, useState, type FormEvent } from "react";
 import { fmt, stroopsToXlm } from "@remit/shared/money";
 import { api, type TransferView } from "@/lib/api";
 import { useSession, type Profile } from "@/lib/session";
-import { Alert, Button, Card, CUR, Field, Input, Pill, STATUS, Select, Spinner, Tracker, dateTime, recipientLine } from "./kit";
+import { ASSET_OF_COUNTRY, CURRENCY, RAILS, railOf } from "@remit/shared/corridors";
+
+const ID_FOR_COUNTRY: Partial<Record<string, string>> = { US: "US_STATE_ID", AE: "EMIRATES_ID", IN: "AADHAAR", EU: "NATIONAL_ID", GB: "DRIVERS_LICENSE", JP: "RESIDENCE_PERMIT" };
+import { Alert, Button, Card, CUR, Field, Input, Pill, STATUS, Select, Spinner, Tracker, amt, countryOf, dateTime, recipientLine } from "./kit";
 import { Shell } from "./Shell";
 
 const EXPLORER = "https://stellar.expert/explorer/testnet";
@@ -28,7 +31,7 @@ const EVENT_LABEL: Partial<Record<TransferView["status"], string>> = {
   EXPIRED: "Review window expired",
   SUBMITTED: "Sent to the Stellar network",
   ON_CHAIN_FAILED: "Network did not accept the transfer",
-  SETTLED_ON_CHAIN: "Settled; funds reached our India partner",
+  SETTLED_ON_CHAIN: "Settled; funds reached our payout partner",
   PAYOUT_PENDING: "Crediting recipient",
   PAYOUT_COMPLETE: "Delivered to recipient",
   PAYOUT_FAILED: "Recipient's bank rejected the credit",
@@ -40,15 +43,18 @@ const EVENT_LABEL: Partial<Record<TransferView["status"], string>> = {
 function Receipt({ t }: { t: TransferView }) {
   const created = t.events[0]?.at ?? t.createdAt;
   const paid = t.events.find((e) => e.status === "PAYOUT_COMPLETE")?.at;
+  const rail = railOf(t.destAsset, t.recipient);
   const rows: [string, React.ReactNode][] = [
+    ["Route", `${countryOf(t.sendAsset)} → ${countryOf(t.destAsset)}`],
     ["You sent", `${CUR[t.sendAsset]} ${fmt(t.sendAmount)}`],
     ["Transfer fee", `${CUR[t.sendAsset]} 0.00`],
-    ["Exchange rate", `1 ${CUR[t.sendAsset]} = ₹${fmt(Number(t.receivedAmount ?? t.quotedDest) / Number(t.sendAmount), 4)}`],
-    [t.receivedAmount ? "They received" : "They'll receive", <b key="r">₹{fmt(t.receivedAmount ?? t.quotedDest)}</b>],
+    ["Exchange rate", `1 ${CUR[t.sendAsset]} = ${amt(t.destAsset, Number(t.receivedAmount ?? t.quotedDest) / Number(t.sendAmount), 4)}`],
+    [t.receivedAmount ? "They received" : "They'll receive", <b key="r">{amt(t.destAsset, t.receivedAmount ?? t.quotedDest)}</b>],
     ["Recipient", `${t.recipient.name} · ${recipientLine(t.recipient)}`],
+    ...(rail ? ([["Paid out via", RAILS[rail].label]] as [string, string][]) : []),
     ["Sent", new Date(created).toLocaleString()],
     ...(paid ? ([["Delivered in", `${((paid - created) / 1000).toFixed(1)} seconds`]] as [string, string][]) : []),
-    ...(t.payoutRef ? ([["Bank reference (UTR)", t.payoutRef]] as [string, string][]) : []),
+    ...(t.payoutRef ? ([[`Payout reference (${rail ? RAILS[rail].refName : "ref"})`, t.payoutRef]] as [string, string][]) : []),
     ["Our reference", t.id],
   ];
   return (
@@ -56,7 +62,7 @@ function Receipt({ t }: { t: TransferView }) {
       <div className="flex items-start justify-between">
         <div>
           <div className="text-sm text-zinc-500">To {t.recipient.name}</div>
-          <div className="text-3xl font-bold tabular-nums">₹{fmt(t.receivedAmount ?? t.quotedDest)}</div>
+          <div className="text-3xl font-bold tabular-nums">{amt(t.destAsset, t.receivedAmount ?? t.quotedDest)}</div>
         </div>
         <Pill status={t.status} />
       </div>
@@ -138,7 +144,7 @@ export function ActivityPage() {
                     </div>
                   </div>
                   <div className="text-right">
-                    <div className="text-sm font-semibold tabular-nums">₹{fmt(t.receivedAmount ?? t.quotedDest)}</div>
+                    <div className="text-sm font-semibold tabular-nums">{amt(t.destAsset, t.receivedAmount ?? t.quotedDest)}</div>
                     <div className="text-xs tabular-nums text-zinc-500">
                       {CUR[t.sendAsset]} {fmt(t.sendAmount)}
                     </div>
@@ -178,7 +184,7 @@ export function AccountPage() {
             {[
               ["Name", user.displayName],
               ["Username", `@${user.username}`],
-              ["Country", user.country === "AE" ? "United Arab Emirates" : "United States"],
+              ["Country", `${CURRENCY[ASSET_OF_COUNTRY[user.country]].flag} ${CURRENCY[ASSET_OF_COUNTRY[user.country]].countryName}`],
               ["Sends in", user.sendCurrency],
               ["Member since", new Date(user.memberSince).toLocaleDateString()],
             ].map(([k, v]) => (
@@ -253,7 +259,7 @@ export function VerifyPage() {
   const [done, setDone] = useState(false);
   useEffect(() => {
     if (user) {
-      setF((x) => ({ ...x, fullName: x.fullName || user.displayName, idType: user.country === "US" ? "US_STATE_ID" : "EMIRATES_ID" }));
+      setF((x) => ({ ...x, fullName: x.fullName || user.displayName, idType: ID_FOR_COUNTRY[user.country] ?? "PASSPORT" }));
     }
   }, [user]);
 
@@ -312,10 +318,15 @@ export function VerifyPage() {
                     <option value="EMIRATES_ID">Emirates ID</option>
                     <option value="PASSPORT">Passport</option>
                     <option value="US_STATE_ID">US state ID</option>
+                    <option value="AADHAAR">Aadhaar</option>
+                    <option value="PAN">PAN card</option>
+                    <option value="NATIONAL_ID">National ID card</option>
+                    <option value="DRIVERS_LICENSE">Driving licence</option>
+                    <option value="RESIDENCE_PERMIT">Residence card</option>
                   </Select>
                 </Field>
                 <Field label="ID number">
-                  <Input value={f.idNumber} onChange={(e) => setF({ ...f, idNumber: e.target.value })} placeholder={f.idType === "EMIRATES_ID" ? "784-1990-1234567-1" : "A1234567"} required />
+                  <Input value={f.idNumber} onChange={(e) => setF({ ...f, idNumber: e.target.value })} placeholder={{ EMIRATES_ID: "784-1990-1234567-1", AADHAAR: "1234-5678-9012", PAN: "ABCDE1234F" }[f.idType] ?? "A1234567"} required />
                 </Field>
               </div>
               <label className="flex items-start gap-2 text-sm text-zinc-600">

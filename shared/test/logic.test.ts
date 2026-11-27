@@ -50,7 +50,7 @@ describe("quote selection", () => {
     expect(ranked.map((r) => r.destAmount)).toEqual(["2514.69", "2492.2", "100"]);
   });
   it("computes mid rates through USD", () => {
-    const fx: FxSnapshot = { inrPerUsd: "92.92", aedPerUsd: "3.6725", asOf: "x", source: "fallback" };
+    const fx: FxSnapshot = { rates: { USD: "1", EUR: "0.86", GBP: "0.75", JPY: "155", CAD: "1.38", AUD: "1.52", SGD: "1.30", AED: "3.6725", INR: "92.92", PHP: "58.5", MXN: "18.5" }, inrPerUsd: "92.92", aedPerUsd: "3.6725", asOf: "x", source: "fallback" };
     expect(Number(midRate(fx, "tUSDC", "tINR"))).toBeCloseTo(92.92, 6);
     expect(Number(midRate(fx, "tAED", "tINR"))).toBeCloseTo(25.3016, 3);
   });

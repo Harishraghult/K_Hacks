@@ -1,4 +1,4 @@
-import { Big, server, type AccountBook } from "@remit/shared";
+import { Big, CURRENCY, codeOfAsset, fmt, server, type AccountBook } from "@remit/shared";
 import { db, kvGet, kvSet } from "./db.js";
 import { getRow, rowsByBatch, transition, type TransferRow } from "./repo.js";
 import { runPayout } from "./service.js";
@@ -59,7 +59,8 @@ export async function handlePayment(book: AccountBook, p: PaymentRecord) {
   // Idempotency: one payout per payment operation, ever.
   if (db.prepare("SELECT 1 FROM processed_payments WHERE op_id = ?").get(p.id)) return;
 
-  const isInr = p.asset_code === "tINR" && p.asset_issuer === book.ISSUER_INR.publicKey;
+  // One of our three assets (correct code AND issuer); anything else is never paid out.
+  const asset = codeOfAsset(book, { asset_type: p.asset_type ?? "native", asset_code: p.asset_code, asset_issuer: p.asset_issuer });
   const { memo, opIds } = await txInfo(p.transaction_hash);
 
   let row: TransferRow | undefined;
@@ -74,7 +75,7 @@ export async function handlePayment(book: AccountBook, p: PaymentRecord) {
   const markProcessed = (transferId: string | null) =>
     db.prepare("INSERT OR IGNORE INTO processed_payments (op_id, tx_hash, transfer_id, at) VALUES (?, ?, ?, ?)").run(p.id, p.transaction_hash, transferId, Date.now());
 
-  if (!isInr) {
+  if (!asset) {
     markProcessed(null);
     return recordUnmatched(p, memo, `Unexpected asset ${p.asset_code ?? "XLM"}`);
   }
@@ -82,9 +83,14 @@ export async function handlePayment(book: AccountBook, p: PaymentRecord) {
     markProcessed(null);
     return recordUnmatched(p, memo, memo ? "Memo does not match any transfer" : "Missing memo");
   }
+  if (asset !== row.dest_asset) {
+    markProcessed(row.id);
+    return recordUnmatched(p, memo, `Received ${asset} but transfer ${row.id} pays out ${row.dest_asset}; held for review`);
+  }
+  const sym = CURRENCY[row.dest_asset].symbol;
   if (new Big(p.amount ?? "0").lt(row.dest_min)) {
     markProcessed(row.id);
-    return recordUnmatched(p, memo, `Received ₹${p.amount} < guaranteed minimum ₹${row.dest_min}; held for review`);
+    return recordUnmatched(p, memo, `Received ${sym}${p.amount} < guaranteed minimum ${sym}${row.dest_min}; held for review`);
   }
 
   // Atomically mark processed and move the transfer forward.
@@ -104,7 +110,7 @@ export async function handlePayment(book: AccountBook, p: PaymentRecord) {
     transition(row.id, "SETTLED_ON_CHAIN", { tx_hash: p.transaction_hash, received_amount: p.amount }, "Payment observed by anchor watcher");
   else db.prepare("UPDATE transfers SET received_amount = ? WHERE id = ?").run(p.amount ?? null, row.id);
   if (getRow(row.id)!.status === "SETTLED_ON_CHAIN") {
-    transition(row.id, "PAYOUT_PENDING", {}, `₹${p.amount} received by India anchor; initiating UPI/bank credit`);
+    transition(row.id, "PAYOUT_PENDING", {}, `${sym}${fmt(p.amount ?? "0")} received by ${CURRENCY[row.dest_asset].countryName} payout anchor; initiating local credit`);
     void runPayout(book, row.id);
   }
 }

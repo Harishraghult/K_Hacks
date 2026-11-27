@@ -1,12 +1,12 @@
 "use client";
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import { ANCHOR_URL, ApiError, api, type TransferView } from "./api";
+import { ANCHOR_URL, ApiError, api, type AssetCode, type Country, type FiatCode, type TransferView } from "./api";
 
 export interface Profile {
   username: string;
   displayName: string;
-  country: "AE" | "US";
-  sendCurrency: "AED" | "USD";
+  country: Country;
+  sendCurrency: FiatCode;
   walletAddress: string;
   walletExplorer: string;
   walletStatus: "PROVISIONING" | "READY" | "FAILED";
@@ -16,8 +16,8 @@ export interface Profile {
   memberSince: number;
 }
 export interface Wallet extends Profile {
-  balances: Record<"tAED" | "tUSDC", { balance: string; enabled: boolean; frozen: boolean }> | null;
-  bank: { currency: "AED" | "USD"; balance: string } | null;
+  balances: Record<AssetCode, { balance: string; enabled: boolean; frozen: boolean }> | null;
+  bank: { currency: FiatCode; balance: string } | null;
 }
 
 interface SessionValue {
@@ -41,8 +41,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const walletTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
-    api<Profile>("/auth/me")
-      .then(setUser)
+    api<Profile | null>("/auth/me")
+      .then((p) => setUser(p ?? null))
       .catch((e) => setUser(e instanceof ApiError && e.status === 401 ? null : null));
   }, []);
 

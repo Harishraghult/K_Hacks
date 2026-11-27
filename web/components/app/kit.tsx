@@ -1,10 +1,83 @@
 "use client";
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from "react";
 import type { TransferStatus } from "@remit/shared/transfer";
-import type { TransferView } from "@/lib/api";
+import { fmt } from "@remit/shared/money";
+import {
+  ASSET_OF_FIAT,
+  CURRENCY,
+  CURRENCY_LIST,
+  FIATS as ALL_FIATS,
+  RAILS,
+  recipientLine as railLine,
+  validateRecipientFor,
+  type Rail,
+  type RailField,
+  type RailRecipient,
+} from "@remit/shared/corridors";
+import type { AssetCode, FiatCode, TransferView } from "@/lib/api";
 
-export const CUR: Record<string, string> = { tAED: "AED", tUSDC: "USD", tINR: "INR" };
-export const ASSET_OF: Record<"AED" | "USD", "tAED" | "tUSDC"> = { AED: "tAED", USD: "tUSDC" };
+export const CUR: Record<string, string> = Object.fromEntries(CURRENCY_LIST.map((c) => [c.asset, c.fiat]));
+export const ASSET_OF: Record<FiatCode, AssetCode> = ASSET_OF_FIAT;
+export const FIATS: FiatCode[] = [...ALL_FIATS];
+export const FIAT_NAME: Record<FiatCode, string> = Object.fromEntries(CURRENCY_LIST.map((c) => [c.fiat, c.name])) as Record<FiatCode, string>;
+
+/** "₹2,514.00", "$27.10", "¥4,210" (pass dp for rates) */
+export function amt(asset: string, v: string | number, dp?: number) {
+  const c = CURRENCY[asset as AssetCode];
+  return `${c?.symbol ?? ""}${fmt(v, dp ?? c?.dp ?? 2)}`;
+}
+export const countryOf = (asset: string) => CURRENCY[asset as AssetCode]?.countryName ?? "";
+
+/** The currency a saved recipient is paid in (first currency whose rail accepts their details). */
+export function destOfRecipient(r: RailRecipient): FiatCode | undefined {
+  return CURRENCY_LIST.find((c) => !validateRecipientFor(c.asset, r))?.fiat;
+}
+
+/** Currency dropdown with flags, built from the registry. */
+export function CurrencySelect({ value, onChange, exclude, id, className = "", label = "name" }: { value: FiatCode; onChange: (f: FiatCode) => void; exclude?: FiatCode; id?: string; className?: string; label?: "code" | "name" }) {
+  return (
+    <select id={id} value={value} onChange={(e) => onChange(e.target.value as FiatCode)} className={className} aria-label="Currency">
+      {CURRENCY_LIST.filter((c) => c.fiat !== exclude).map((c) => (
+        <option key={c.fiat} value={c.fiat}>
+          {c.flag} {c.fiat}
+          {label === "name" ? ` · ${c.name}` : ""}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+export type RailForm = Record<RailField | "name", string>;
+export const emptyRailForm = (): RailForm => ({ name: "", upiId: "", bankAcct: "", ifsc: "", routingNumber: "", iban: "", sortCode: "", bankCode: "", branchCode: "", bsb: "", email: "", mobile: "", clabe: "" });
+
+/** Recipient object for one rail (only that rail's fields). */
+export function recipientFor(rail: Rail, f: RailForm): RailRecipient {
+  const out: RailRecipient = { name: f.name.trim() };
+  for (const spec of RAILS[rail].fields) out[spec.key] = f[spec.key].trim();
+  return out;
+}
+
+/** Input fields for a payout rail, generated from its field spec, with demo test values underneath. */
+export function RailFields({ rail, form, setForm }: { rail: Rail; form: RailForm; setForm: (f: RailForm) => void }) {
+  const info = RAILS[rail];
+  const sample = Object.values(info.sample).join(" / ");
+  const fail = Object.values(info.failSample).join(" / ");
+  return (
+    <div>
+      <div className={`grid gap-3 ${info.fields.length === 1 ? "grid-cols-1" : info.fields.length === 2 ? "grid-cols-2" : "grid-cols-3"}`}>
+        {info.fields.map((spec) => (
+          <Field key={spec.key} label={spec.label} id={`recipient-${spec.key}`}>
+            <Input id={`recipient-${spec.key}`} name={spec.key} value={form[spec.key]} onChange={(e) => setForm({ ...form, [spec.key]: e.target.value })} placeholder={spec.placeholder} inputMode={"numeric" in spec && spec.numeric ? "numeric" : undefined} />
+          </Field>
+        ))}
+      </div>
+      <div className="mt-1 text-xs text-zinc-500">
+        Testing: <span className="font-mono">{sample}</span> works · <span className="font-mono">{fail}</span> is rejected by the bank (you get refunded)
+        {rail === "UPI" ? " · blocked@upi is on a sanctions list" : rail === "AE_IBAN" ? " · AE850331234567890999999 is on a sanctions list" : ""}
+      </div>
+    </div>
+  );
+}
 
 export function Card({ children, className = "" }: { children: ReactNode; className?: string }) {
   return <div className={`rounded-2xl border border-zinc-200 bg-white shadow-sm ${className}`}>{children}</div>;
@@ -58,8 +131,8 @@ export const STATUS: Record<TransferStatus, { label: string; tone: Tone; help: s
   CREATED: { label: "Processing", tone: "blue", help: "We've received your transfer." },
   COMPLIANCE_CHECK: { label: "Processing", tone: "blue", help: "Running our standard security checks." },
   APPROVED: { label: "Processing", tone: "blue", help: "Checks passed. Sending now." },
-  SUBMITTED: { label: "On its way", tone: "blue", help: "Your money is moving to India." },
-  SETTLED_ON_CHAIN: { label: "On its way", tone: "blue", help: "Arrived at our partner in India." },
+  SUBMITTED: { label: "On its way", tone: "blue", help: "Your money is crossing the border." },
+  SETTLED_ON_CHAIN: { label: "On its way", tone: "blue", help: "Arrived at our payout partner in the destination country." },
   PAYOUT_PENDING: { label: "Crediting", tone: "blue", help: "Crediting your recipient's account now." },
   PAYOUT_COMPLETE: { label: "Delivered", tone: "green", help: "Your recipient has the money." },
   FLAGGED_FOR_REVIEW: { label: "Under review", tone: "amber", help: "Larger transfers get a quick manual review, usually within minutes. Nothing has been taken from your balance yet." },
@@ -81,7 +154,7 @@ export function Pill({ status }: { status: TransferStatus }) {
 const STEPS = [
   { key: "sent", label: "Sent", reached: ["CREATED", "COMPLIANCE_CHECK", "FLAGGED_FOR_REVIEW", "APPROVED", "SUBMITTED", "SETTLED_ON_CHAIN", "PAYOUT_PENDING", "PAYOUT_COMPLETE"] },
   { key: "checked", label: "Security check", reached: ["APPROVED", "SUBMITTED", "SETTLED_ON_CHAIN", "PAYOUT_PENDING", "PAYOUT_COMPLETE"] },
-  { key: "moving", label: "Reached India", reached: ["SETTLED_ON_CHAIN", "PAYOUT_PENDING", "PAYOUT_COMPLETE"] },
+  { key: "moving", label: "Reached partner", reached: ["SETTLED_ON_CHAIN", "PAYOUT_PENDING", "PAYOUT_COMPLETE"] },
   { key: "done", label: "Delivered", reached: ["PAYOUT_COMPLETE"] },
 ];
 
@@ -132,6 +205,6 @@ export function dateTime(ms: number) {
   return new Date(ms).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
-export function recipientLine(r: { upiId?: string; bankAcct?: string; ifsc?: string }) {
-  return r.upiId ? `UPI · ${r.upiId}` : `Bank ••${r.bankAcct?.slice(-4)}${r.ifsc ? ` · ${r.ifsc}` : ""}`;
+export function recipientLine(r: Partial<RailRecipient>) {
+  return railLine({ ...r, name: r.name ?? "" });
 }

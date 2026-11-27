@@ -1,4 +1,8 @@
 import type { Quote, TransferView } from "@remit/shared";
+import type { AssetCode, Corridor, Country, CurrencyInfo, Fiat } from "@remit/shared/corridors";
+
+export type { AssetCode, Country };
+export type FiatCode = Fiat;
 
 export const ANCHOR_URL = process.env.NEXT_PUBLIC_ANCHOR_URL ?? "http://localhost:4000";
 
@@ -16,9 +20,9 @@ export interface Sender {
   publicKey: string;
   kyc: "PASSED" | "NOT_VERIFIED";
   sanctioned: boolean;
-  balances: Record<"tUSDC" | "tAED", SenderBalance>;
-  bank: { currency: "USD" | "AED"; balance: string };
-  defaultAsset: "tUSDC" | "tAED";
+  balances: Record<AssetCode, SenderBalance>;
+  bank: { currency: FiatCode; balance: string };
+  defaultAsset: AssetCode;
 }
 export interface AppConfig {
   explorer: string;
@@ -27,6 +31,8 @@ export interface AppConfig {
   quoteTtlSec: number;
   xlmUsdReference: string;
   anchorRecv: string;
+  corridors: Corridor[];
+  currencies: CurrencyInfo[];
 }
 export interface Health {
   ok: boolean;
@@ -34,7 +40,7 @@ export interface Health {
   needsBootstrap: boolean;
   missingAccounts: string[];
   watcher: { connected: boolean; cursor?: string; lastEventAt?: number; reconnects: number; lastError?: string };
-  fx: { inrPerUsd: string; aedPerUsd: string; asOf: string; source: string };
+  fx: { rates: Record<FiatCode, string>; inrPerUsd: string; aedPerUsd: string; asOf: string; source: string };
   pools: { id: string; pair: string; price: string; target: string; driftPct: string }[];
 }
 export interface Unmatched {

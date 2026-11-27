@@ -1,7 +1,7 @@
 /** Customer-facing API: username/password accounts, each with its own custodial testnet wallet. */
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
-import { Big, EXPLORER_BASE, type AccountBook, type Recipient } from "@remit/shared";
+import { ALL_ASSETS, Big, COUNTRIES, CURRENCY, EXPLORER_BASE, FIATS, ASSET_OF_COUNTRY, type AccountBook, type Fiat, type Recipient } from "@remit/shared";
 import { checkLogin, createSession, currentUser, destroySession, hashPassword, loginLockedFor } from "./auth.js";
 import { setAuthorized, trustlines } from "./chain.js";
 import { db } from "./db.js";
@@ -9,11 +9,11 @@ import { KYC_DENY_NAMES } from "./personas.js";
 import { getRow, toView, type TransferRow } from "./repo.js";
 import { HttpError, isSanctioned, kycPassed } from "./service.js";
 import { openStream } from "./sse.js";
-import { createUser, provisionWallet, resumeProvisioning, seedDemoUsers, userByUsername, type UserRow } from "./wallets.js";
+import { addMissingTrustlines, createUser, provisionWallet, resumeProvisioning, seedDemoUsers, userByUsername, type UserRow } from "./wallets.js";
 
 interface Ctx {
   book: AccountBook;
-  depositFor: (senderId: string, amount: unknown, currency: "USD" | "AED") => Promise<unknown>;
+  depositFor: (senderId: string, amount: unknown, currency: Fiat) => Promise<unknown>;
   transferFor: (senderId: string, quoteId: string, recipient: Recipient, purpose: string) => Promise<unknown>;
   parse: <T>(schema: z.ZodType<T>, data: unknown) => T;
   RecipientSchema: z.ZodType<Recipient>;
@@ -37,13 +37,26 @@ export async function registerCustomerRoutes(app: FastifyInstance, ctx: Ctx) {
   const { book, parse } = ctx;
   seedDemoUsers(book, hashPassword);
   resumeProvisioning(book);
+  // Upgrade customer wallets created before every corridor existed (adds the tINR trustline, authorises it if KYC'd).
+  void (async () => {
+    const rows = db.prepare("SELECT username, wallet_pub FROM users WHERE wallet_status = 'READY' AND wallet_secret_enc IS NOT NULL").all() as unknown as { username: string; wallet_pub: string }[];
+    for (const r of rows) {
+      try {
+        const added = await addMissingTrustlines(book, r.username);
+        if (added.length && kycPassed(r.wallet_pub) && !isSanctioned(r.wallet_pub)) await setAuthorized(book, r.wallet_pub, added, true);
+        if (added.length) app.log.info(`wallet ${r.username}: added ${added.join(", ")} trustline(s)`);
+      } catch (e) {
+        app.log.warn(`wallet upgrade for ${r.username} failed: ${(e as Error).message}`);
+      }
+    }
+  })();
 
   function profile(u: UserRow) {
     return {
       username: u.username,
       displayName: u.display_name,
       country: u.country,
-      sendCurrency: u.country === "US" ? "USD" : "AED",
+      sendCurrency: CURRENCY[ASSET_OF_COUNTRY[u.country]].fiat,
       walletAddress: u.wallet_pub,
       walletExplorer: `${EXPLORER_BASE}/account/${u.wallet_pub}`,
       walletStatus: u.wallet_status,
@@ -58,7 +71,7 @@ export async function registerCustomerRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.post("/auth/signup", async (req, reply) => {
     const body = parse(
-      z.object({ username: Username, password: Password, fullName: z.string().trim().min(2, "Enter your full name").max(80), country: z.enum(["AE", "US"]) }),
+      z.object({ username: Username, password: Password, fullName: z.string().trim().min(2, "Enter your full name").max(80), country: z.enum(COUNTRIES as [string, ...string[]]).transform((c) => c as UserRow["country"]) }),
       req.body,
     );
     if (body.password.toLowerCase().includes(body.username)) throw new HttpError(400, "Password must not contain your username", "WEAK_PASSWORD");
@@ -85,13 +98,17 @@ export async function registerCustomerRoutes(app: FastifyInstance, ctx: Ctx) {
     return { ok: true };
   });
 
-  app.get("/auth/me", async (req) => profile(requireUser(req)));
+  // 200 + null when signed out (not 401): the app calls this on every page load to find out.
+  app.get("/auth/me", async (req) => {
+    const u = currentUser(req);
+    return u ? profile(u) : null;
+  });
 
   // ---------------- wallet ----------------
 
   app.get("/me/wallet", async (req) => {
     const u = requireUser(req);
-    const lines = u.wallet_status === "READY" ? await trustlines(book, u.wallet_pub, ["tAED", "tUSDC"]) : undefined;
+    const lines = u.wallet_status === "READY" ? await trustlines(book, u.wallet_pub, ALL_ASSETS) : undefined;
     const bank = db.prepare("SELECT currency, balance FROM bank WHERE account_id = ?").get(u.sender_id) as { currency: string; balance: string } | undefined;
     return {
       ...profile(u),
@@ -117,7 +134,7 @@ export async function registerCustomerRoutes(app: FastifyInstance, ctx: Ctx) {
       z.object({
         fullName: z.string().trim().min(2).max(80),
         dob: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date of birth required"),
-        idType: z.enum(["EMIRATES_ID", "PASSPORT", "US_STATE_ID"]),
+        idType: z.enum(["EMIRATES_ID", "PASSPORT", "US_STATE_ID", "AADHAAR", "PAN", "NATIONAL_ID", "DRIVERS_LICENSE", "RESIDENCE_PERMIT"]),
         idNumber: z.string().trim().regex(/^[A-Za-z0-9-]{5,24}$/, "Enter a valid ID number"),
       }),
       req.body,
@@ -133,14 +150,14 @@ export async function registerCustomerRoutes(app: FastifyInstance, ctx: Ctx) {
     }
     db.prepare("INSERT INTO kyc (public_key, name, status, at) VALUES (?, ?, 'PASSED', ?) ON CONFLICT(public_key) DO UPDATE SET status = 'PASSED', name = excluded.name, at = excluded.at").run(u.wallet_pub, body.fullName, Date.now());
     // The real switch: issuers authorise this wallet's trustlines on-chain.
-    await setAuthorized(book, u.wallet_pub, ["tAED", "tUSDC"], true);
+    await setAuthorized(book, u.wallet_pub, ALL_ASSETS, true);
     ctx.invalidateSenders();
     return profile(u);
   });
 
   app.post("/me/deposit", async (req) => {
     const u = requireUser(req);
-    const body = parse(z.object({ amount: z.union([z.string(), z.number()]), currency: z.enum(["USD", "AED"]) }), req.body);
+    const body = parse(z.object({ amount: z.union([z.string(), z.number()]), currency: z.enum(FIATS) }), req.body);
     return ctx.depositFor(u.sender_id, body.amount, body.currency);
   });
 

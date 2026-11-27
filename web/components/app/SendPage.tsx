@@ -2,16 +2,22 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { Big, fmt } from "@remit/shared/money";
-import { ApiError, api, type Recipient, type TransferView } from "@/lib/api";
+import { CURRENCY, RAILS, RAILS_FOR, railOf, validateRecipientFor, type Rail } from "@remit/shared/corridors";
+import { ApiError, api, type FiatCode, type Recipient, type TransferView } from "@/lib/api";
 import { useQuote } from "@/lib/useQuote";
 import { useSession } from "@/lib/session";
 import { AddMoneyDialog, useRates } from "./HomePage";
-import { Alert, ASSET_OF, Button, Card, Field, Input, Select, Spinner, Tracker, recipientLine } from "./kit";
+import { Alert, ASSET_OF, Button, Card, CurrencySelect, FIATS, Field, Input, RailFields, Select, Spinner, Tracker, amt, countryOf, destOfRecipient, emptyRailForm, recipientFor, recipientLine } from "./kit";
 import { Shell } from "./Shell";
 
 type Step = 0 | 1 | 2 | 3;
 type Saved = Recipient & { lastSentAt: number; count: number };
-const PURPOSES = ["Family support", "Education", "Medical expenses", "Savings", "Gift", "Rent / housing"];
+const PURPOSES = ["Family support", "Education", "Medical expenses", "Savings", "Gift", "Rent / housing", "Business payment"];
+
+/** USD value of 1 unit of `fiat`, from the quote's FX snapshot. */
+function usdPer(fiat: FiatCode, fx: { rates: Record<FiatCode, string> }) {
+  return new Big(1).div(fx.rates[fiat]);
+}
 
 function Steps({ step }: { step: Step }) {
   const labels = ["Amount", "Recipient", "Review", "Done"];
@@ -32,10 +38,11 @@ export function SendPage() {
   const { user, wallet, transfers } = useSession();
   const { config } = useRates();
   const [step, setStep] = useState<Step>(0);
-  const [cur, setCur] = useState<"AED" | "USD">("AED");
+  const [cur, setCur] = useState<FiatCode>("AED");
+  const [to, setTo] = useState<FiatCode>("INR");
   const [amount, setAmount] = useState("100");
-  const [method, setMethod] = useState<"upi" | "bank">("upi");
-  const [r, setR] = useState({ name: "", upiId: "", bankAcct: "", ifsc: "" });
+  const [method, setMethod] = useState<Rail>("UPI");
+  const [r, setR] = useState(emptyRailForm);
   const [purpose, setPurpose] = useState(PURPOSES[0]);
   const [saved, setSaved] = useState<Saved[]>([]);
   const [busy, setBusy] = useState(false);
@@ -48,33 +55,32 @@ export function SendPage() {
   useEffect(() => {
     const p = new URLSearchParams(window.location.search);
     const a = p.get("amount");
-    const c = p.get("cur");
+    const c = p.get("cur") as FiatCode | null;
+    const t = p.get("to") as FiatCode | null;
     if (a) setAmount(a);
-    if (c === "AED" || c === "USD") setCur(c);
-    else if (user) setCur(user.sendCurrency);
+    const from = c && FIATS.includes(c) ? c : user?.sendCurrency ?? "AED";
+    setCur(from);
+    if (t && FIATS.includes(t) && t !== from) setTo(t);
+    else if (from === "INR") setTo("USD");
     api<Saved[]>("/me/recipients").then(setSaved).catch(() => undefined);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const asset = ASSET_OF[cur];
-  const { quote, error: quoteErr, loading, secsLeft, amountError, refresh } = useQuote(asset, amount, { paused: step === 3 });
+  const destAsset = ASSET_OF[to];
+  const rails = RAILS_FOR[destAsset];
+  // Keep the payout method valid for the chosen destination currency.
+  useEffect(() => {
+    if (!rails.includes(method)) setMethod(rails[0]);
+  }, [rails, method]);
+  const { quote, error: quoteErr, loading, secsLeft, amountError, refresh } = useQuote(asset, amount, destAsset, { paused: step === 3 });
   const balance = wallet?.balances?.[asset];
   const overBalance = !amountError && balance && new Big(amount).gt(balance.balance);
-  const usdEq = quote && config ? new Big(amount).times(cur === "USD" ? 1 : new Big(1).div("3.6725")) : undefined;
+  const usdEq = quote && config && !amountError ? new Big(amount).times(usdPer(cur, quote.fx)) : undefined;
   const needsReview = usdEq && config ? usdEq.gt(config.compliance.REVIEW_THRESHOLD_USD) : false;
+  const D = (v: string | number, dp?: number) => amt(destAsset, v, dp);
 
-  const recipient: Recipient = useMemo(
-    () => (method === "upi" ? { name: r.name.trim(), upiId: r.upiId.trim() } : { name: r.name.trim(), bankAcct: r.bankAcct.trim(), ...(r.ifsc ? { ifsc: r.ifsc.trim().toUpperCase() } : {}) }),
-    [method, r],
-  );
-  const recipientErr = !r.name.trim()
-    ? "Enter the recipient's name"
-    : method === "upi"
-      ? !/^[\w.\-]{2,64}@[a-zA-Z]{2,64}$/.test(r.upiId.trim()) ? "Enter a valid UPI ID, e.g. name@okaxis" : undefined
-      : !/^\d{9,18}$/.test(r.bankAcct.trim())
-        ? "Account number: 9–18 digits"
-        : !/^[A-Z]{4}0[A-Z0-9]{6}$/.test(r.ifsc.trim().toUpperCase())
-          ? "Enter a valid IFSC, e.g. SBIN0001234"
-          : undefined;
+  const recipient: Recipient = useMemo(() => recipientFor(method, r), [method, r]);
+  const recipientErr = rails.includes(method) ? validateRecipientFor(destAsset, recipient) : "Choose how they receive it";
 
   const canSend = wallet?.walletStatus === "READY" && wallet.kyc === "VERIFIED" && !wallet.restricted;
   const sent: TransferView | undefined = sentId ? transfers.find((t) => t.id === sentId) : undefined;
@@ -93,7 +99,7 @@ export function SendPage() {
       if (err.code === "QUOTE_EXPIRED") {
         const before = quote.best.destAmount;
         const fresh = await refresh();
-        setNotice(fresh ? `The rate was refreshed: they now receive ₹${fmt(fresh.best.destAmount)} (was ₹${fmt(before)}). Please confirm again.` : "Rate expired. Please try again.");
+        setNotice(fresh ? `The rate was refreshed: they now receive ${D(fresh.best.destAmount)} (was ${D(before)}). Please confirm again.` : "Rate expired. Please try again.");
       } else setError(err.message);
     } finally {
       setBusy(false);
@@ -133,10 +139,16 @@ export function SendPage() {
               <div>
                 <div className="flex items-center gap-3 rounded-2xl border-2 border-zinc-900 px-4 py-3">
                   <input id="send-amount" name="sendAmount" value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" autoFocus className="w-full bg-transparent text-4xl font-bold tabular-nums outline-none" aria-label="Amount to send" />
-                  <select id="send-currency" name="sendCurrency" value={cur} onChange={(e) => setCur(e.target.value as "AED" | "USD")} className="rounded-xl bg-zinc-100 px-3 py-2 text-base font-semibold" aria-label="Currency">
-                    <option value="AED">AED</option>
-                    <option value="USD">USD</option>
-                  </select>
+                  <CurrencySelect
+                    id="send-currency"
+                    label="code"
+                    value={cur}
+                    onChange={(c) => {
+                      setCur(c);
+                      if (c === to) setTo(FIATS.find((f) => f !== c)!);
+                    }}
+                    className="rounded-xl bg-zinc-100 px-3 py-2 text-base font-semibold"
+                  />
                 </div>
                 <div className="mt-2 flex justify-between text-sm">
                   <span className={overBalance || amountError ? "text-rose-600" : "text-zinc-500"}>
@@ -149,12 +161,23 @@ export function SendPage() {
                   )}
                 </div>
               </div>
+              <div>
+                <label htmlFor="receive-currency" className="mb-1 block text-sm font-medium text-zinc-700">
+                  They receive in
+                </label>
+                <CurrencySelect id="receive-currency" value={to} onChange={setTo} exclude={cur} className="w-full rounded-xl border border-zinc-300 bg-white px-3 py-2.5 text-sm font-medium" />
+                <div className="mt-1 text-xs text-zinc-500">
+                  {CURRENCY[destAsset].flag} {countryOf(destAsset)} · paid out via {RAILS_FOR[destAsset].map((x) => RAILS[x].short).join(" or ")} · {FIATS.length} currencies, {FIATS.length * (FIATS.length - 1)} routes
+                </div>
+              </div>
               <div className="rounded-2xl bg-emerald-50 p-5">
-                <div className="text-sm text-emerald-800">Recipient gets</div>
-                <div className="text-4xl font-bold tabular-nums text-emerald-900">{quote && !amountError ? `₹${fmt(quote.best.destAmount)}` : loading ? <Spinner /> : "—"}</div>
+                <div className="text-sm text-emerald-800">
+                  Recipient gets ({CURRENCY[asset].fiat} → {to})
+                </div>
+                <div className="text-4xl font-bold tabular-nums text-emerald-900">{quote && !amountError ? D(quote.best.destAmount) : loading ? <Spinner /> : "—"}</div>
                 {quote && !amountError && (
                   <div className="mt-2 text-sm text-emerald-900/75">
-                    Guaranteed at least ₹{fmt(quote.destMin)} · rate held for {secsLeft}s
+                    Guaranteed at least {D(quote.destMin)} · rate held for {secsLeft}s
                   </div>
                 )}
                 {quote?.priceImpactWarning && <div className="mt-2 text-sm font-semibold text-amber-800">This is a large amount for current liquidity: {quote.best.costVsMidPct}% below the market rate. Consider sending less.</div>}
@@ -173,13 +196,18 @@ export function SendPage() {
                 <div>
                   <div className="mb-2 text-sm font-medium text-zinc-700">Recent recipients</div>
                   <div className="flex flex-wrap gap-2">
-                    {saved.map((s, i) => (
+                    {saved.filter((s) => destOfRecipient(s) && destOfRecipient(s) !== cur).map((s, i) => (
                       <button
                         key={i}
                         type="button"
                         onClick={() => {
-                          setMethod(s.upiId ? "upi" : "bank");
-                          setR({ name: s.name, upiId: s.upiId ?? "", bankAcct: s.bankAcct ?? "", ifsc: s.ifsc ?? "" });
+                          // Switching to this recipient also switches the receive currency to theirs.
+                          const f = destOfRecipient(s)!;
+                          setTo(f);
+                          setMethod(railOf(ASSET_OF[f], s)!);
+                          const form = emptyRailForm();
+                          for (const [k, v] of Object.entries(s)) if (k in form && typeof v === "string") form[k as keyof typeof form] = v;
+                          setR(form);
                         }}
                         className="rounded-xl border border-zinc-200 px-3 py-2 text-left text-sm hover:border-emerald-500 hover:bg-emerald-50"
                       >
@@ -194,30 +222,19 @@ export function SendPage() {
                 <Input id="recipient-name" name="recipientName" value={r.name} onChange={(e) => setR({ ...r, name: e.target.value })} placeholder="e.g. Lakshmi Kumar" />
               </Field>
               <div>
-                <div className="mb-1 text-sm font-medium text-zinc-700">How should they receive it?</div>
-                <div className="grid grid-cols-2 gap-2">
-                  {(["upi", "bank"] as const).map((m) => (
+                <div className="mb-1 text-sm font-medium text-zinc-700">
+                  How should they receive {to} in {countryOf(destAsset)}?
+                </div>
+                <div className={`grid gap-2 ${rails.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}>
+                  {rails.map((m) => (
                     <button key={m} type="button" onClick={() => setMethod(m)} className={`rounded-xl border-2 px-4 py-3 text-left text-sm ${method === m ? "border-emerald-500 bg-emerald-50" : "border-zinc-200 hover:border-zinc-300"}`}>
-                      <div className="font-semibold">{m === "upi" ? "UPI" : "Bank account"}</div>
-                      <div className="text-xs text-zinc-500">{m === "upi" ? "Instant to any UPI app" : "Any Indian bank via IFSC"}</div>
+                      <div className="font-semibold">{RAILS[m].label}</div>
+                      <div className="text-xs text-zinc-500">{RAILS[m].help}</div>
                     </button>
                   ))}
                 </div>
               </div>
-              {method === "upi" ? (
-                <Field label="UPI ID" id="recipient-upi" hint="Testing: fail@upi = bank rejects (you get refunded) · blocked@upi = sanctions hit">
-                  <Input id="recipient-upi" name="upiId" value={r.upiId} onChange={(e) => setR({ ...r, upiId: e.target.value })} placeholder="name@okaxis" />
-                </Field>
-              ) : (
-                <div className="grid grid-cols-2 gap-3">
-                  <Field label="Account number" id="recipient-bank-acct">
-                    <Input id="recipient-bank-acct" name="bankAcct" value={r.bankAcct} onChange={(e) => setR({ ...r, bankAcct: e.target.value.replace(/\D/g, "") })} inputMode="numeric" />
-                  </Field>
-                  <Field label="IFSC code" id="recipient-ifsc">
-                    <Input id="recipient-ifsc" name="ifsc" value={r.ifsc} onChange={(e) => setR({ ...r, ifsc: e.target.value.toUpperCase() })} placeholder="SBIN0001234" />
-                  </Field>
-                </div>
-              )}
+              {rails.includes(method) && <RailFields rail={method} form={r} setForm={setR} />}
               <Field label="Purpose of transfer" hint="Required by regulation">
                 <Select value={purpose} onChange={(e) => setPurpose(e.target.value)}>
                   {PURPOSES.map((p) => (
@@ -245,8 +262,10 @@ export function SendPage() {
                   ["You send", `${cur} ${fmt(amount)}`],
                   ["Transfer fee", `${cur} 0.00`],
                   ["Network fee", `$${quote.networkFee.usd} (paid by us)`],
-                  ["Exchange rate", `1 ${cur} = ₹${fmt(quote.effectiveRate, 4)}`],
+                  ["Route", `${countryOf(asset)} → ${countryOf(destAsset)} (${cur} → ${to})`],
+                  ["Exchange rate", `1 ${cur} = ${D(quote.effectiveRate, 4)}`],
                   ["Recipient", `${recipient.name} · ${recipientLine(recipient)}`],
+                  ["Paid out via", RAILS[method].label],
                   ["Purpose", purpose],
                   ["Arrives", "In about 10 seconds"],
                 ].map(([k, v]) => (
@@ -258,8 +277,8 @@ export function SendPage() {
                 <div className="flex items-center justify-between bg-emerald-50 px-4 py-3">
                   <dt className="font-semibold text-emerald-900">They receive</dt>
                   <dd className="text-right">
-                    <div className="text-xl font-bold tabular-nums text-emerald-900">₹{fmt(quote.best.destAmount)}</div>
-                    <div className="text-xs text-emerald-800">guaranteed at least ₹{fmt(quote.destMin)}</div>
+                    <div className="text-xl font-bold tabular-nums text-emerald-900">{D(quote.best.destAmount)}</div>
+                    <div className="text-xs text-emerald-800">guaranteed at least {D(quote.destMin)}</div>
                   </dd>
                 </div>
               </dl>
@@ -288,7 +307,7 @@ export function SendPage() {
                 <>
                   <div>
                     <h2 className="text-lg font-semibold">
-                      {sent.status === "PAYOUT_COMPLETE" ? `₹${fmt(sent.receivedAmount ?? sent.quotedDest)} delivered to ${sent.recipient.name}` : `Sending ₹${fmt(sent.quotedDest)} to ${sent.recipient.name}`}
+                      {sent.status === "PAYOUT_COMPLETE" ? `${amt(sent.destAsset, sent.receivedAmount ?? sent.quotedDest)} delivered to ${sent.recipient.name}` : `Sending ${amt(sent.destAsset, sent.quotedDest)} to ${sent.recipient.name}`}
                     </h2>
                     <p className="text-sm text-zinc-500">Reference {sent.id}</p>
                   </div>
@@ -310,7 +329,7 @@ export function SendPage() {
                   )}
                   {sent.status === "PAYOUT_COMPLETE" && (
                     <Alert tone="ok">
-                      Credited to {recipientLine(sent.recipient)}. Bank reference <b>{sent.payoutRef}</b>.
+                      Credited to {recipientLine(sent.recipient)}. Payout reference <b>{sent.payoutRef}</b>.
                     </Alert>
                   )}
                   <div className="flex gap-2">
@@ -352,7 +371,7 @@ export function SendPage() {
               </div>
               <div className="flex justify-between">
                 <span className="text-zinc-500">They get</span>
-                <span className="font-semibold tabular-nums text-emerald-700">{quote ? `₹${fmt(quote.best.destAmount)}` : "—"}</span>
+                <span className="font-semibold tabular-nums text-emerald-700">{quote ? D(quote.best.destAmount) : "—"}</span>
               </div>
               {r.name && step > 0 && (
                 <div className="flex justify-between">
@@ -366,8 +385,8 @@ export function SendPage() {
             <Card className="p-5 text-sm">
               <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Compared with a bank wire</div>
               <div className="mt-2 text-zinc-600">
-                A typical bank wire charges about {config.traditional.FEE_PCT}% and takes {config.traditional.SETTLEMENT}. Your family would get roughly{" "}
-                <b>₹{fmt(new Big(quote.best.destAmount).div(new Big(1).minus(new Big(quote.best.costVsMidPct).div(100))).times(new Big(1).minus(new Big(config.traditional.FEE_PCT).div(100))))}</b>.
+                A typical bank wire charges about {config.traditional.FEE_PCT}% and takes {config.traditional.SETTLEMENT}. Your recipient would get roughly{" "}
+                <b>{CURRENCY[destAsset].symbol}{fmt(new Big(quote.best.destAmount).div(new Big(1).minus(new Big(quote.best.costVsMidPct).div(100))).times(new Big(1).minus(new Big(config.traditional.FEE_PCT).div(100))))}</b>.
               </div>
               <div className="mt-1 text-[11px] text-zinc-400">Illustrative, World Bank Remittance Prices Worldwide average.</div>
             </Card>

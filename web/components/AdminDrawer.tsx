@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { fmt } from "@remit/shared/money";
+import { CURRENCY, recipientLine } from "@remit/shared/corridors";
 import { api, type Health, type Sender, type TransferView, type Unmatched } from "@/lib/api";
 import { relTime } from "@/lib/useLive";
 import { Badge, FIAT_LABEL, Spinner, short } from "./ui";
@@ -82,7 +83,7 @@ export function AdminDrawer({ open, onClose, senders, transfers, health, unmatch
             <div key={t.id} className="mb-2 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-xs">
               <button type="button" onClick={() => onSelect(t.id)} className="font-mono text-amber-300 underline">{t.id}</button>
               <div className="mt-1 text-zinc-300">
-                {t.senderName} → {t.recipient.name} ({t.recipient.upiId}) · {FIAT_LABEL[t.sendAsset]} {fmt(t.sendAmount)} ≈ USD {fmt(t.usdEquiv)}
+                {t.senderName} → {t.recipient.name} ({recipientLine(t.recipient)}) · {FIAT_LABEL[t.sendAsset]} {fmt(t.sendAmount)} → {FIAT_LABEL[t.destAsset]} ≈ USD {fmt(t.usdEquiv)}
               </div>
               <div className="text-zinc-500">{t.reasons.join("; ")}</div>
               <div className="mt-2 flex gap-2">
@@ -130,8 +131,11 @@ export function AdminDrawer({ open, onClose, senders, transfers, health, unmatch
               ))}
             </select>
             <select value={claw.asset} onChange={(e) => setClaw({ ...claw, asset: e.target.value })} className="rounded-lg bg-zinc-900 px-2 py-1">
-              <option value="tAED">AED</option>
-              <option value="tUSDC">USD</option>
+              {Object.entries(FIAT_LABEL).map(([a, f]) => (
+                <option key={a} value={a}>
+                  {f}
+                </option>
+              ))}
             </select>
             <input value={claw.amount} onChange={(e) => setClaw({ ...claw, amount: e.target.value })} className="w-20 rounded-lg bg-zinc-900 px-2 py-1" />
             <button
@@ -171,7 +175,7 @@ export function AdminDrawer({ open, onClose, senders, transfers, health, unmatch
           {unmatched.map((u) => (
             <div key={u.op_id} className="border-t border-white/5 py-1.5 text-[11px]">
               <div className="flex justify-between">
-                <span>₹{fmt(u.amount)} · memo <span className="font-mono">{u.memo ?? "(none)"}</span></span>
+                <span>{CURRENCY[u.asset as "tINR"]?.symbol ?? `${u.asset} `}{fmt(u.amount)} · memo <span className="font-mono">{u.memo ?? "(none)"}</span></span>
                 <span className="text-zinc-500">{relTime(u.at)}</span>
               </div>
               <div className="text-zinc-500">{u.reason} · <span className="font-mono">{short(u.tx_hash)}</span></div>
@@ -187,7 +191,7 @@ export function AdminDrawer({ open, onClose, senders, transfers, health, unmatch
               <Row k="Testnet accounts">{health.needsBootstrap ? `missing ${health.missingAccounts.join(", ")} — run npm run bootstrap` : "ok"}</Row>
               <Row k="Payment watcher">{health.watcher.connected ? "streaming" : "reconnecting"} · {health.watcher.reconnects} reconnects</Row>
               <Row k="Watcher cursor"><span className="font-mono">{health.watcher.cursor}</span></Row>
-              <Row k="FX">1 USD = ₹{health.fx.inrPerUsd} ({health.fx.source}, {health.fx.asOf})</Row>
+              <Row k="FX">1 USD = ₹{health.fx.inrPerUsd} = AED {health.fx.aedPerUsd} ({health.fx.source}, {health.fx.asOf})</Row>
               {health.pools?.map((p) => (
                 <Row key={p.id} k={`AMM ${p.pair}`}>
                   {p.price} vs mid {p.target}{" "}
@@ -198,7 +202,7 @@ export function AdminDrawer({ open, onClose, senders, transfers, health, unmatch
             <button type="button" disabled={!!busy} onClick={() => run("rebal", () => api("/admin/rebalance", { body: {}, admin: token }), "Market maker re-centred pools at the FX mid")} className="mt-2 rounded-lg bg-zinc-800 px-3 py-1 text-xs disabled:opacity-50">
               {busy === "rebal" ? <Spinner /> : "Rebalance pools to FX mid"}
             </button>
-            <p className="mt-1 text-[10px] text-zinc-500">Demo traffic flows one way and pushes pool prices off the mid; on mainnet arbitrage corrects this. Here the mock market maker does it automatically every minute.</p>
+            <p className="mt-1 text-[10px] text-zinc-500">Demo traffic is lopsided per corridor and pushes pool prices off the mid; on mainnet arbitrage corrects this. Here the mock market maker does it automatically every minute.</p>
             </>
           ) : (
             <Empty>Loading…</Empty>

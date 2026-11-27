@@ -2,12 +2,26 @@ import { ENV } from "./env.js"; // must be first: loads .env
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import cors from "@fastify/cors";
 import { z } from "zod";
-import { Memo, Operation } from "@stellar/stellar-sdk";
+import { Operation } from "@stellar/stellar-sdk";
+import fs from "node:fs";
+import path from "node:path";
 import {
   ACCOUNT_NAMES,
+  ALL_ASSETS,
   AmountError,
   ASSET_FOR_FIAT,
+  BOOTSTRAP_VERSION,
   Big,
+  CORRIDORS,
+  CURRENCY_LIST,
+  FIATS,
+  ISSUER_FOR,
+  ISSUER_NAMES,
+  normalizeRecipient,
+  dataDir,
+  midRate,
+  normalizeIban,
+  validateRecipientFor,
   COMPLIANCE,
   DEFAULT_SLIPPAGE_BPS,
   EXPLORER_BASE,
@@ -56,6 +70,16 @@ import { senderPub } from "./wallets.js";
 import { registerCustomerRoutes } from "./customer.js";
 
 const book = loadAccounts();
+{
+  // Refuse to run against an older testnet setup (e.g. before all 6 corridors had trustlines/liquidity).
+  const netFile = path.join(dataDir(), "network.json");
+  const version = fs.existsSync(netFile) ? Number(JSON.parse(fs.readFileSync(netFile, "utf8")).bootstrapVersion ?? 1) : 0;
+  const missing = ACCOUNT_NAMES.filter((n) => !book[n]);
+  if (version < BOOTSTRAP_VERSION || missing.length) {
+    console.error(`\nTestnet setup is out of date (v${version}, need v${BOOTSTRAP_VERSION}${missing.length ? `; missing ${missing.join(", ")}` : ""}).\nRun:  npm run bootstrap   then start the anchor again.\n`);
+    process.exit(1);
+  }
+}
 seedDb(book);
 
 const app = Fastify({ logger: { level: "info", redact: ["req.headers['x-admin-token']"] } });
@@ -63,16 +87,35 @@ await app.register(cors, { origin: ENV.WEB_ORIGINS, methods: ["GET", "POST"], cr
 
 // ---------------- helpers ----------------
 
-const SendAsset = z.enum(["tUSDC", "tAED"]);
+const AnyAsset = z.enum(ALL_ASSETS as [AssetCode, ...AssetCode[]]);
+const SendAsset = AnyAsset;
+const Fiat = z.enum(FIATS);
+const Field = z.string().trim().min(1).max(64).optional();
 const SenderId = z.enum(ACCOUNT_NAMES).refine((id) => !!personaById(id), "Not a sender account");
 const RecipientSchema = z
   .object({
     name: z.string().trim().min(1).max(80),
-    upiId: z.string().trim().regex(/^[\w.\-]{2,64}@[a-zA-Z]{2,64}$/, "Invalid UPI ID").optional(),
-    bankAcct: z.string().trim().regex(/^\d{9,18}$/, "Invalid bank account").optional(),
-    ifsc: z.string().trim().toUpperCase().regex(/^[A-Z]{4}0[A-Z0-9]{6}$/, "Invalid IFSC code").optional(),
+    // Shape only; the destination rail's own rules (checksums, lengths) are enforced by requireRail().
+    upiId: Field,
+    bankAcct: Field,
+    ifsc: Field,
+    routingNumber: Field,
+    iban: z.string().transform(normalizeIban).pipe(z.string().regex(/^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$/, "Invalid IBAN")).optional(),
+    sortCode: Field,
+    bankCode: Field,
+    branchCode: Field,
+    bsb: Field,
+    email: Field,
+    mobile: Field,
+    clabe: Field,
   })
-  .refine((r) => r.upiId || r.bankAcct, "UPI ID or bank account required");
+  .refine((r) => r.upiId || r.bankAcct || r.iban || r.email || r.mobile || r.clabe, "Recipient account details required (UPI ID, bank account, IBAN, e-mail, mobile or CLABE)");
+
+/** Rail check: the recipient's details must match the destination currency's payout rail. */
+function requireRail(dest: AssetCode, r: Recipient) {
+  const err = validateRecipientFor(dest, r);
+  if (err) throw new HttpError(400, err, "RECIPIENT_RAIL");
+}
 
 function parse<T>(schema: z.ZodType<T>, data: unknown): T {
   const r = schema.safeParse(data);
@@ -123,15 +166,16 @@ async function rebalance(thresholdPct = 0.25) {
 }
 setInterval(() => rebalance().catch((e) => app.log.warn(`rebalance failed: ${(e as Error).message}`)), 60_000).unref();
 
-async function quoteFor(sendAsset: AssetCode, sendAmount: string, slippageBps: number): Promise<Quote> {
-  const key = `${sendAsset}:${sendAmount}:${slippageBps}`;
+async function quoteFor(sendAsset: AssetCode, sendAmount: string, destAsset: AssetCode, slippageBps: number): Promise<Quote> {
+  if (sendAsset === destAsset) throw new HttpError(400, "Send and receive currencies must differ", "SAME_CURRENCY");
+  const key = `${sendAsset}:${destAsset}:${sendAmount}:${slippageBps}`;
   const hit = quoteCache.get(key);
   if (hit && Date.now() - hit.at < 5000) {
     const q: Quote = { ...hit.q, quoteId: `${hit.q.quoteId}c${Math.random().toString(36).slice(2, 5)}`, expiresAt: hit.q.expiresAt };
     quotes.set(q.quoteId, q);
     return q;
   }
-  const q = await getQuote(book, sendAsset, sendAmount, "tINR", slippageBps);
+  const q = await getQuote(book, sendAsset, sendAmount, destAsset, slippageBps);
   quotes.set(q.quoteId, q);
   quoteCache.set(key, { at: Date.now(), q });
   return q;
@@ -148,6 +192,8 @@ app.get("/config", async () => ({
   quoteTtlSec: QUOTE_TTL_SEC,
   xlmUsdReference: XLM_USD_REFERENCE,
   anchorRecv: book.ANCHOR_RECV.publicKey,
+  corridors: CORRIDORS,
+  currencies: CURRENCY_LIST,
 }));
 
 let healthCache: { at: number; body: unknown } | undefined;
@@ -162,7 +208,7 @@ app.get("/health", async () => {
   } catch {
     /* unreachable */
   }
-  const critical: AccountName[] = ["ISSUER_USD", "ISSUER_INR", "ISSUER_AED", "ANCHOR_SEND", "ANCHOR_RECV", "MARKET_MAKER"];
+  const critical: AccountName[] = [...ISSUER_NAMES, "ANCHOR_SEND", "ANCHOR_RECV", "MARKET_MAKER"];
   const missing: string[] = [];
   if (horizonOk) for (const n of critical) if (!(await loadAccountOrNull(book[n].publicKey))) missing.push(n);
   const fx = await getFx();
@@ -192,7 +238,7 @@ app.get("/senders", async () => {
   const body = await Promise.all(
     PERSONAS.map(async (p) => {
       const pub = book[p.id].publicKey;
-      const lines = await trustlines(book, pub, ["tUSDC", "tAED"]);
+      const lines = await trustlines(book, pub, ALL_ASSETS);
       const bank = db.prepare("SELECT currency, balance FROM bank WHERE account_id = ?").get(p.id) as { currency: string; balance: string };
       return {
         id: p.id,
@@ -225,14 +271,14 @@ app.post("/kyc/verify", async (req) => {
     throw new HttpError(403, "KYC rejected by verification provider (watchlist match)", "KYC_REJECTED");
   }
   db.prepare("INSERT INTO kyc (public_key, name, status, at) VALUES (?, ?, 'PASSED', ?) ON CONFLICT(public_key) DO UPDATE SET status = 'PASSED', name = excluded.name, at = excluded.at").run(body.publicKey, body.name, Date.now());
-  const authorized = await setAuthorized(book, body.publicKey, ["tUSDC", "tAED"], true);
+  const authorized = await setAuthorized(book, body.publicKey, ALL_ASSETS, true);
   invalidateSenders();
   broadcast("senders", {});
   return { status: "PASSED", authorizedOnChain: authorized };
 });
 
 /** Mock bank debit → ANCHOR_SEND pays the equivalent digital currency into the sender's wallet. */
-async function depositFor(senderId: string, rawAmount: unknown, fiatCurrency: "USD" | "AED") {
+async function depositFor(senderId: string, rawAmount: unknown, fiatCurrency: (typeof FIATS)[number]) {
   const amount = parseAmount(rawAmount);
   const pub = senderPub(book, senderId);
   if (!kycPassed(pub)) throw new HttpError(403, "Verify your identity before adding money", "KYC_REQUIRED");
@@ -243,7 +289,8 @@ async function depositFor(senderId: string, rawAmount: unknown, fiatCurrency: "U
   if (!bank) throw new HttpError(400, "No linked bank account", "NO_BANK");
   // Mock FX at the bank if the deposit currency differs from the bank account currency.
   const fx = await getFx();
-  const debit = bank.currency === fiatCurrency ? new Big(amount) : fiatCurrency === "USD" ? new Big(amount).times(fx.aedPerUsd) : new Big(amount).div(fx.aedPerUsd);
+  const bankAsset = ASSET_FOR_FIAT[bank.currency as (typeof FIATS)[number]];
+  const debit = bank.currency === fiatCurrency ? new Big(amount) : new Big(amount).times(midRate(fx, asset, bankAsset));
   if (debit.gt(bank.balance)) throw new HttpError(400, `Not enough money in your bank account (${bank.currency} ${new Big(bank.balance).toFixed(2)})`, "BANK_INSUFFICIENT");
 
   // Debit first (conditional update guards against concurrent deposits), credit back on failure.
@@ -262,22 +309,24 @@ async function depositFor(senderId: string, rawAmount: unknown, fiatCurrency: "U
 }
 
 app.post("/deposit", async (req) => {
-  const body = parse(z.object({ senderId: SenderId, fiatAmount: z.union([z.string(), z.number()]), fiatCurrency: z.enum(["USD", "AED"]) }), req.body);
+  const body = parse(z.object({ senderId: SenderId, fiatAmount: z.union([z.string(), z.number()]), fiatCurrency: Fiat }), req.body);
   return depositFor(body.senderId, body.fiatAmount, body.fiatCurrency);
 });
 
 app.get("/quote", async (req) => {
   const q = parse(
-    z.object({ sendAsset: SendAsset, sendAmount: z.string(), destAsset: z.literal("tINR").default("tINR"), slippageBps: z.coerce.number().int().min(10).max(500).default(DEFAULT_SLIPPAGE_BPS) }),
+    z.object({ sendAsset: SendAsset, sendAmount: z.string(), destAsset: AnyAsset.default("tINR"), slippageBps: z.coerce.number().int().min(10).max(500).default(DEFAULT_SLIPPAGE_BPS) }),
     req.query,
   );
-  return quoteFor(q.sendAsset, parseAmount(q.sendAmount), q.slippageBps);
+  return quoteFor(q.sendAsset, parseAmount(q.sendAmount), q.destAsset, q.slippageBps);
 });
 
 async function transferFor(senderId: string, quoteId: string, recipient: Recipient, purpose: string) {
   const quote = quotes.get(quoteId);
   if (!quote) throw new HttpError(409, "Quote not found or expired. Please refresh the quote.", "QUOTE_EXPIRED");
   if (Date.now() > quote.expiresAt) throw new HttpError(409, "Quote expired. Please review the refreshed quote.", "QUOTE_EXPIRED");
+  requireRail(quote.destAsset, recipient); // before consuming the quote, so the user can fix details and retry
+  recipient = normalizeRecipient(quote.destAsset, recipient);
   quotes.delete(quoteId); // single use
 
   const pub = senderPub(book, senderId);
@@ -302,16 +351,19 @@ app.post("/transfer", async (req, reply) => {
 /** Micro-remittances: N small transfers settled together in one ledger (one tx, N path-payment ops). */
 app.post("/transfer/batch", async (req, reply) => {
   const body = parse(
-    z.object({ senderId: SenderId, sendAsset: SendAsset, amountEach: z.union([z.string(), z.number()]), count: z.number().int().min(2).max(20), recipient: RecipientSchema, purpose: z.string().max(60).default("Family support") }),
+    z.object({ senderId: SenderId, sendAsset: SendAsset, destAsset: AnyAsset.default("tINR"), amountEach: z.union([z.string(), z.number()]), count: z.number().int().min(2).max(20), recipient: RecipientSchema, purpose: z.string().max(60).default("Family support") }),
     req.body,
   );
+  if (body.sendAsset === body.destAsset) throw new HttpError(400, "Send and receive currencies must differ", "SAME_CURRENCY");
+  requireRail(body.destAsset, body.recipient);
+  body.recipient = normalizeRecipient(body.destAsset, body.recipient);
   const amountEach = parseAmount(body.amountEach);
   const pub = book[body.senderId].publicKey;
   const lines = await trustlines(book, pub, [body.sendAsset]);
   const total = new Big(amountEach).times(body.count);
   if (total.gt(lines[body.sendAsset].balance) && lines[body.sendAsset].authorized)
     throw new HttpError(400, `Insufficient balance for ${body.count} × ${amountEach}`, "INSUFFICIENT_BALANCE");
-  const quote = await getQuote(book, body.sendAsset, amountEach, "tINR", DEFAULT_SLIPPAGE_BPS);
+  const quote = await getQuote(book, body.sendAsset, amountEach, body.destAsset, DEFAULT_SLIPPAGE_BPS);
   const batchId = newTransferId("B");
   const rows = [];
   for (let i = 0; i < body.count; i++)
@@ -348,7 +400,7 @@ app.post("/admin/sanction", async (req) => {
   const { publicKey } = parse(z.object({ publicKey: z.string().length(56) }), req.body);
   db.prepare("INSERT OR IGNORE INTO sanctions (subject, kind, reason, at) VALUES (?, 'account', 'Added by admin', ?)").run(publicKey, Date.now());
   // Freeze on-chain: issuers revoke authorization. Existing balances stay but cannot move.
-  const revoked = await setAuthorized(book, publicKey, ["tUSDC", "tAED"], false);
+  const revoked = await setAuthorized(book, publicKey, ALL_ASSETS, false);
   invalidateSenders();
   broadcast("senders", {});
   return { sanctioned: true, revokedOnChain: revoked };
@@ -358,7 +410,7 @@ app.post("/admin/unsanction", async (req) => {
   requireAdmin(req);
   const { publicKey } = parse(z.object({ publicKey: z.string().length(56) }), req.body);
   db.prepare("DELETE FROM sanctions WHERE subject = ?").run(publicKey);
-  const restored = kycPassed(publicKey) ? await setAuthorized(book, publicKey, ["tUSDC", "tAED"], true) : [];
+  const restored = kycPassed(publicKey) ? await setAuthorized(book, publicKey, ALL_ASSETS, true) : [];
   invalidateSenders();
   broadcast("senders", {});
   return { sanctioned: false, reauthorizedOnChain: restored };
@@ -381,7 +433,7 @@ app.post("/admin/clawback", async (req) => {
   const body = parse(z.object({ publicKey: z.string().length(56), asset: SendAsset, amount: z.union([z.string(), z.number()]) }), req.body);
   const lines = await trustlines(book, body.publicKey, [body.asset]);
   const amount = parseAmount(body.amount, { max: lines[body.asset].balance });
-  const issuer = body.asset === "tUSDC" ? "ISSUER_USD" : "ISSUER_AED";
+  const issuer = ISSUER_FOR[body.asset];
   const r = await submitOps(keypair(book, issuer), [Operation.clawback({ asset: assetOf(book, body.asset), from: body.publicKey, amount })]);
   invalidateSenders();
   broadcast("senders", {});
@@ -405,7 +457,7 @@ app.post("/admin/simulate-stray-payment", async (req) => {
   requireAdmin(req);
   const r = await submitOps(keypair(book, "MARKET_MAKER"), [
     Operation.payment({ destination: book.ANCHOR_RECV.publicKey, asset: assetOf(book, "tINR"), amount: "123.4500000" }),
-  ], { memo: Memo.text("no-such-transfer") });
+  ], { memo: "no-such-transfer" });
   return { txHash: r.hash };
 });
 

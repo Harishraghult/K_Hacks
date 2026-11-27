@@ -1,10 +1,12 @@
 /**
  * CLI smoke test for the core money path (no server):
- *   npm run cli:transfer -- [SENDER] [ASSET] [AMOUNT]
+ *   npm run cli:transfer -- [SENDER] [ASSET] [AMOUNT] [DEST_ASSET]
  *   e.g. npm run cli:transfer -- SENDER_1 tAED 100
+ *        npm run cli:transfer -- SENDER_4 tINR 5000 tAED     (India → UAE)
+ *        npm run cli:transfer -- SENDER_2 tUSDC 20 tAED      (US → UAE)
  *        npm run cli:transfer -- UNVERIFIED_1 tAED 1    (expect network rejection)
  */
-import { Memo, Operation } from "@stellar/stellar-sdk";
+import { Operation } from "@stellar/stellar-sdk";
 import {
   DEFAULT_SLIPPAGE_BPS,
   EXPLORER_BASE,
@@ -21,7 +23,7 @@ import {
   type AssetCode,
 } from "@remit/shared";
 
-const [senderArg = "SENDER_1", assetArg = "tAED", amountArg = "100"] = process.argv.slice(2);
+const [senderArg = "SENDER_1", assetArg = "tAED", amountArg = "100", destArg = "tINR"] = process.argv.slice(2);
 
 async function main() {
   const book = loadAccounts();
@@ -29,12 +31,13 @@ async function main() {
   const sendAsset = assetArg as AssetCode;
   const amount = parseAmount(amountArg);
 
-  const q = await getQuote(book, sendAsset, amount, "tINR", DEFAULT_SLIPPAGE_BPS);
-  console.log(`\nQuote ${q.quoteId}: send ${amount} ${sendAsset}`);
-  console.log(`  mid rate ${q.midRate} INR/${sendAsset}  (FX ${q.fx.source}, as of ${q.fx.asOf})`);
-  console.log(`  BEST  ${q.best.hops.map((h) => h.code).join(" → ")}  = ₹${q.best.destAmount}  (${q.best.costVsMidPct}% vs mid)`);
-  for (const r of q.rejected) console.log(`  alt   ${r.hops.map((h) => h.code).join(" → ")}  = ₹${r.destAmount}  (${r.costVsMidPct}% vs mid)`);
-  console.log(`  destMin (1% slippage) ₹${q.destMin}; network fee ${q.networkFee.xlm} XLM ≈ $${q.networkFee.usd}`);
+  const destAsset = destArg as AssetCode;
+  const q = await getQuote(book, sendAsset, amount, destAsset, DEFAULT_SLIPPAGE_BPS);
+  console.log(`\nQuote ${q.quoteId}: send ${amount} ${sendAsset} → ${destAsset}`);
+  console.log(`  mid rate ${q.midRate} ${destAsset}/${sendAsset}  (FX ${q.fx.source}, as of ${q.fx.asOf})`);
+  console.log(`  BEST  ${q.best.hops.map((h) => h.code).join(" → ")}  = ${q.best.destAmount} ${destAsset}  (${q.best.costVsMidPct}% vs mid)`);
+  for (const r of q.rejected) console.log(`  alt   ${r.hops.map((h) => h.code).join(" → ")}  = ${r.destAmount} ${destAsset}  (${r.costVsMidPct}% vs mid)`);
+  console.log(`  destMin (1% slippage) ${q.destMin} ${destAsset}; network fee ${q.networkFee.xlm} XLM ≈ $${q.networkFee.usd}`);
 
   const memo = `T${Date.now().toString(36)}`;
   const t0 = Date.now();
@@ -48,11 +51,11 @@ async function main() {
         destMin: q.destMin,
         path: q.best.hops.slice(1, -1).map(hopToAsset),
       }),
-    ], { memo: Memo.text(memo) });
+    ], { memo });
     const ops = await server.operations().forTransaction(res.hash).call();
     const received = (ops.records[0] as unknown as { amount: string }).amount;
     console.log(`\n✔ settled in ${((Date.now() - t0) / 1000).toFixed(1)}s, ledger ${res.ledger}, memo ${memo}`);
-    console.log(`  ANCHOR_RECV received ₹${received}; fee charged ${stroopsToXlm(res.feeCharged)} XLM`);
+    console.log(`  ANCHOR_RECV received ${received} ${destAsset}; fee charged ${stroopsToXlm(res.feeCharged)} XLM`);
     console.log(`  ${EXPLORER_BASE}/tx/${res.hash}\n`);
   } catch (e) {
     if (e instanceof StellarTxError) {
